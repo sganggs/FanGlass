@@ -26,6 +26,12 @@ struct FansView: View {
                         .padding(.vertical, 40)
                     }
                 } else {
+                    // Same warning the menu-bar panel shows: without the helper a
+                    // mode still saves and still lights up, but no fan moves.
+                    if !state.helperAvailable {
+                        helperBanner
+                    }
+
                     HStack {
                         GlassSectionHeader(
                             title: "风扇",
@@ -49,6 +55,27 @@ struct FansView: View {
             .padding(.bottom, 14)
         }
     }
+
+    private var helperBanner: some View {
+        GlassCard(padding: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("未安装特权助手,选择的模式不会生效")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("风扇转速的写入需要 root 权限,只需授权一次。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 10)
+                Button("安装助手…") { state.requestHelperInstall(reason: .banner) }
+                    .buttonStyle(LiquidButtonStyle(prominent: true))
+                    .fixedSize()
+            }
+        }
+    }
 }
 
 struct FanCardView: View {
@@ -60,7 +87,12 @@ struct FanCardView: View {
     private var modeBinding: Binding<FanControlMode> {
         Binding(
             get: { config.mode },
-            set: { mode in state.updateFanConfig(fan.index) { $0.mode = mode } }
+            set: { mode in
+                let apply = { state.updateFanConfig(fan.index) { $0.mode = mode } }
+                // 自动 IS what an uninstalled helper leaves the fan on — only the
+                // modes that need a privileged write are worth a password for.
+                if mode == .auto { apply() } else { state.requireHelper(.modePicked, then: apply) }
+            }
         )
     }
 
@@ -159,8 +191,12 @@ struct FanCardView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 ForEach(FanConfig.presets, id: \.name) { preset in
-                    Button(preset.name) { state.applyPreset(fan.index, curve: preset.curve) }
-                        .buttonStyle(LiquidButtonStyle(active: config.selection == .preset(preset.name)))
+                    Button(preset.name) {
+                        state.requireHelper(.presetPicked) {
+                            state.applyPreset(fan.index, curve: preset.curve)
+                        }
+                    }
+                    .buttonStyle(LiquidButtonStyle(active: config.selection == .preset(preset.name)))
                 }
                 // Outlined and neutral on purpose: 自定义 describes the state of
                 // an unlit row, it is not a fifth preset to click.

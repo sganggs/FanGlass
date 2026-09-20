@@ -63,6 +63,9 @@ struct RootView: View {
         // opened by that click; onChange covers it already being open.
         .onAppear { consumePendingTab() }
         .onChange(of: state.pendingTab) { _, _ in consumePendingTab() }
+        .sheet(isPresented: $state.showInstallSheet) {
+            HelperOnboardingView().environmentObject(state)
+        }
     }
 
     private func consumePendingTab() {
@@ -156,13 +159,52 @@ struct RootView: View {
 struct HelperStatusPill: View {
     @EnvironmentObject var state: AppState
 
+    private enum Status { case connected, outdated, missing }
+
+    private var status: Status {
+        if !state.helperAvailable { return .missing }
+        return state.helperOutdated ? .outdated : .connected
+    }
+
+    private var color: Color {
+        switch status {
+        case .connected: return .green
+        case .outdated:  return .orange
+        case .missing:   return .red
+        }
+    }
+
+    private var label: String {
+        switch status {
+        case .connected: return "助手已连接"
+        case .outdated:  return "助手版本过旧"
+        case .missing:   return "助手未安装"
+        }
+    }
+
+    // The most visible helper indicator in the window; make it fix the problem
+    // it reports instead of only naming it.
     var body: some View {
+        if status == .connected {
+            pill
+        } else {
+            Button {
+                state.requestHelperInstall(reason: status == .outdated ? .outdated : .statusPill)
+            } label: {
+                pill
+            }
+            .buttonStyle(.plain)
+            .help(status == .outdated ? "点按更新特权助手" : "点按安装特权助手")
+        }
+    }
+
+    private var pill: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(state.helperAvailable ? Color.green : Color.red)
+                .fill(color)
                 .frame(width: 7, height: 7)
-                .shadow(color: (state.helperAvailable ? Color.green : Color.red).opacity(0.6), radius: 3)
-            Text(state.helperAvailable ? "助手已连接" : "助手未安装")
+                .shadow(color: color.opacity(0.6), radius: 3)
+            Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
         }

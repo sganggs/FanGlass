@@ -12,9 +12,13 @@ mkdir -p "$BUILD"
 
 echo "▸ compiling helper…"
 swiftc -O -o "$BUILD/fanglass-helper" \
-    "$DIR/Sources/HelperTool/main.swift" "$DIR/Sources/Shared/SMC.swift" \
+    "$DIR/Sources/HelperTool/main.swift" \
+    "$DIR/Sources/Shared/SMC.swift" "$DIR/Sources/Shared/HelperProtocol.swift" \
     -sdk "$SDK" -target "$TARGET" \
     -framework IOKit -framework Foundation
+# Sign before it is copied into Resources: --deep's handling of a plain
+# executable nested in a bundle is unreliable.
+codesign --force --sign - "$BUILD/fanglass-helper"
 
 echo "▸ compiling app…"
 find "$DIR/Sources/FanGlass" "$DIR/Sources/Shared" -name "*.swift" -print0 \
@@ -54,6 +58,16 @@ if [ -f "$DIR/tools/make_icon.swift" ]; then
 fi
 
 echo "▸ signing (ad-hoc)…"
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# A source tree on the Desktop or in an iCloud folder leaves com.apple.FinderInfo
+# on the bundle, and codesign refuses it ("resource fork, Finder information, or
+# similar detritus not allowed"). This used to be silenced with `|| true`, which
+# shipped a bundle carrying only swiftc's linker signature — no sealed resources,
+# which Gatekeeper reports to the downloader as 已损坏 with no way to open it.
+xattr -cr "$APP"
+codesign --force --deep --sign - "$APP"
+# The file provider re-stamps FinderInfo within seconds of the bundle changing,
+# and --strict refuses it; clear again so the check tests the signature, not sync.
+xattr -cr "$APP"
+codesign --verify --deep --strict "$APP"
 
 echo "✓ $APP"

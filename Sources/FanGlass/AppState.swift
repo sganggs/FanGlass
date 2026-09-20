@@ -33,7 +33,15 @@ final class AppState: ObservableObject {
     @Published private(set) var fanHistories: [Int: [SensorSample]] = [:]
     @Published private(set) var scanning = true
     @Published private(set) var helperAvailable = false
+    /// Protocol version the installed daemon reports; nil when none answers.
+    @Published private(set) var helperVersion: Int?
     @Published private(set) var targetRPMs: [Int: Double] = [:]
+    /// Mirrors `installer.phase` — a nested ObservableObject would never
+    /// refresh a view, so the installer pushes its phase here instead.
+    @Published private(set) var installPhase: HelperInstaller.Phase = .idle
+    @Published private(set) var installReason: HelperInstaller.Reason = .manual
+    /// Drives the onboarding sheet in RootView.
+    @Published var showInstallSheet = false
     /// Tab the main window should open on. RootView owns `tab` as private
     /// @State, so this is the only way in from the menu-bar panel.
     @Published var pendingTab: AppTab?
@@ -50,6 +58,9 @@ final class AppState: ObservableObject {
     nonisolated(unsafe) private var scanSnapshot: [(id: String, keys: [String])] = []
     nonisolated(unsafe) private var fanCountSnapshot = 0
     nonisolated(unsafe) private var pollTick = 0
+    /// Poll ticks between helper re-pings, recomputed from `pollInterval` so the
+    /// period stays ~10 s however fast the sensors are sampled.
+    nonisolated(unsafe) private var helperCheckDivisor = 10
 
     // Control bookkeeping (MainActor only).
     private var lastSentRPM: [Int: Double] = [:]
@@ -58,16 +69,40 @@ final class AppState: ObservableObject {
     private var lastOverheatAlert = Date.distantPast
     private var pollTimer: DispatchSourceTimer?
 
+    // Privileged-helper install flow.
+    let installer = HelperInstaller()
+    /// What the user asked for while no helper was installed, replayed once one is.
+    private var pendingIntent: (() -> Void)?
+
     /// Read by AppDelegate on termination (must stay nonisolated).
     nonisolated(unsafe) static var restoreAutoOnQuitFlag = true
 
     init() {
         settings = SettingsStore.load()
         AppState.restoreAutoOnQuitFlag = settings.restoreAutoOnQuit
-        helperAvailable = HelperClient.shared.isAvailable
+        let version = HelperClient.shared.probe()
+        helperAvailable = version != nil
+        helperVersion = version
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         applyLaunchAtLogin()
+        installer.onPhaseChange = { [weak self] phase in self?.installPhase = phase }
+        observeSystemEvents()
         worker.async { [weak self] in self?.bootstrap() }
+    }
+
+    /// The socket can disappear while the Mac sleeps, and waking or switching
+    /// back to FanGlass is exactly when the status pill gets looked at.
+    private func observeSystemEvents() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshHelperStatus() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshHelperStatus() }
+        }
     }
 
     func restartPolling() {
@@ -115,6 +150,7 @@ final class AppState: ObservableObject {
             self.fans = fanStatuses
             self.scanning = false
             self.startPolling()
+            self.promptForHelperIfNeeded()
         }
     }
 
@@ -137,6 +173,7 @@ final class AppState: ObservableObject {
     // MARK: - polling
 
     private func startPolling() {
+        helperCheckDivisor = max(1, Int((10.0 / max(0.1, settings.pollInterval)).rounded()))
         let t = DispatchSource.makeTimerSource(queue: worker)
         t.schedule(deadline: .now(), repeating: settings.pollInterval)
         t.setEventHandler { [weak self] in self?.pollOnce() }
@@ -160,17 +197,15 @@ final class AppState: ObservableObject {
             self.applyPollResults(sensorValues: newValues, fanStatuses: fanStatuses)
         }
 
-        // Re-ping the helper every ~10 ticks: it can be installed, uninstalled or
-        // watchdog-stopped while the app runs, and a stale flag makes the status
-        // pill and the mode highlight assert things the daemon is not doing.
-        // Runs after the UI hop so a dead socket's timeout never delays sensors,
-        // and only assigns on change so it does not invalidate views every tick.
+        // Re-ping the helper about every 10 s: it can be installed, uninstalled,
+        // updated or watchdog-stopped while the app runs, and a stale flag makes
+        // the status pill and the mode highlight assert things the daemon is not
+        // doing. Runs after the UI hop so a dead socket's timeout never delays
+        // sensors, and only assigns on change so views are not invalidated every tick.
         pollTick &+= 1
-        if pollTick % 10 == 0 {
-            let ok = HelperClient.shared.isAvailable
-            Task { @MainActor in
-                if self.helperAvailable != ok { self.helperAvailable = ok }
-            }
+        if pollTick % helperCheckDivisor == 0 {
+            let version = HelperClient.shared.probe()
+            Task { @MainActor in self.applyHelperProbe(version) }
         }
     }
 
@@ -274,11 +309,129 @@ final class AppState: ObservableObject {
         worker.async { HelperClient.shared.autoAll() }
     }
 
+    // MARK: - privileged helper
+
     func refreshHelperStatus() {
         worker.async {
-            let ok = HelperClient.shared.isAvailable
-            Task { @MainActor in self.helperAvailable = ok }
+            let version = HelperClient.shared.probe()
+            Task { @MainActor in self.applyHelperProbe(version) }
         }
+    }
+
+    private func applyHelperProbe(_ version: Int?) {
+        let ok = version != nil
+        if helperAvailable != ok { helperAvailable = ok }
+        if helperVersion != version { helperVersion = version }
+    }
+
+    /// A daemon left over from an older FanGlass. launchd keeps whatever is on
+    /// disk running, so only an explicit reinstall replaces it.
+    var helperOutdated: Bool {
+        guard let helperVersion else { return false }
+        return helperVersion < HelperProtocol.version
+    }
+
+    /// Runs `work` immediately — the highlight must show what the user chose
+    /// even if they decline the password dialog — and, when there is no helper
+    /// to carry it out, offers to install one and replays the intent on success.
+    func requireHelper(_ reason: HelperInstaller.Reason, then work: @escaping () -> Void) {
+        work()
+        guard !helperAvailable else { return }
+        pendingIntent = work
+        requestHelperInstall(reason: reason)
+    }
+
+    /// The one entry point to the authorization prompt. Uses the sheet when the
+    /// main window is on screen and an NSAlert otherwise: at first launch there
+    /// is no window at all, and a MenuBarExtra panel dismisses itself as soon as
+    /// the password dialog takes focus.
+    func requestHelperInstall(reason: HelperInstaller.Reason) {
+        guard !installer.isBusy, !showInstallSheet else { return }
+        installReason = reason
+        installer.clearNote()
+        if NSApp.windows.contains(where: { AppDelegate.isMainWindow($0) && $0.isVisible }) {
+            AppDelegate.presentMainWindow()
+            showInstallSheet = true
+        } else {
+            presentInstallAlert(reason: reason)
+        }
+    }
+
+    /// Starts the privileged install. The sheet, the Settings card and the
+    /// NSAlert all route their outcome through here.
+    func beginInstall() {
+        installer.install { [weak self] version in
+            guard let self else { return }
+            let intent = pendingIntent
+            pendingIntent = nil
+            if let version {
+                applyHelperProbe(version)
+                showInstallSheet = false
+                intent?()          // replay what the user picked before installing
+                controlDecide()
+            } else {
+                refreshHelperStatus()
+                // The NSAlert path has no window left to show the error in.
+                if !showInstallSheet, case .failed(let message) = installPhase {
+                    presentFailureAlert(message)
+                }
+            }
+        }
+    }
+
+    func uninstallHelper() {
+        installer.uninstall { [weak self] _ in self?.refreshHelperStatus() }
+    }
+
+    /// "稍后" — keep the user's choice highlighted, just stop asking for now.
+    func cancelInstallRequest() {
+        pendingIntent = nil
+        showInstallSheet = false
+    }
+
+    private func promptForHelperIfNeeded() {
+        let reason: HelperInstaller.Reason
+        if !helperAvailable {
+            guard !settings.helperOnboardingShown else { return }
+            settings.helperOnboardingShown = true   // offered once, whatever the outcome
+            reason = .firstLaunch
+        } else if helperOutdated {
+            guard settings.lastPromptedHelperVersion < HelperProtocol.version else { return }
+            settings.lastPromptedHelperVersion = HelperProtocol.version
+            reason = .outdated   // never reinstall on our own; it costs a password
+        } else {
+            return
+        }
+        // Let the launch settle first: the menu-bar icon should be on screen
+        // before a modal takes over, and NSAlert mid-launch is fragile.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self?.requestHelperInstall(reason: reason)
+        }
+    }
+
+    private func presentInstallAlert(reason: HelperInstaller.Reason) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = reason.title
+        alert.informativeText = reason.message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: reason.confirmTitle)
+        alert.addButton(withTitle: "稍后")
+        if alert.runModal() == .alertFirstButtonReturn {
+            beginInstall()
+        } else {
+            cancelInstallRequest()
+        }
+    }
+
+    private func presentFailureAlert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "助手安装未完成"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     // MARK: - overheat alerts

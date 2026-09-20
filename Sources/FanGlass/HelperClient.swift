@@ -4,7 +4,7 @@ import Foundation
 
 final class HelperClient: @unchecked Sendable {
     static let shared = HelperClient()
-    private let socketPath = "/var/run/fanglass.sock"
+    private let socketPath = HelperProtocol.socketPath
 
     /// Send one command, return the response dictionary. nil on any failure.
     @discardableResult
@@ -54,9 +54,16 @@ final class HelperClient: @unchecked Sendable {
         return try? JSONSerialization.jsonObject(with: response) as? [String: Any]
     }
 
-    var isAvailable: Bool {
-        (send(["cmd": "ping"])?["ok"] as? Bool) == true
+    /// One round-trip handshake: the protocol version the daemon reports, or
+    /// nil when nothing answers. Liveness and version come from the same probe
+    /// so the two can never disagree.
+    func probe() -> Int? {
+        guard let reply = send(["cmd": "ping"]), (reply["ok"] as? Bool) == true else { return nil }
+        // A pre-versioning helper (FanGlass 1.0) answers without the field.
+        return (reply["version"] as? Int) ?? 1
     }
+
+    var isAvailable: Bool { probe() != nil }
 
     @discardableResult
     func hold(fan: Int, rpm: Double) -> Bool {

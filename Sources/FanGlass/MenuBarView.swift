@@ -75,7 +75,9 @@ struct MenuBarView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 4)
-                        Button("去安装") { openMainWindow(tab: .settings) }
+                        // Straight to the password dialog — sending the user to
+                        // the Settings tab to find the card is three clicks more.
+                        Button("安装") { state.requestHelperInstall(reason: .banner) }
                             .buttonStyle(LiquidButtonStyle(compact: true))
                             .fixedSize()
                     }
@@ -90,7 +92,9 @@ struct MenuBarView: View {
                     }
                     ForEach(FanConfig.presets, id: \.name) { preset in
                         compactModeButton(preset.name, active: selection == .preset(preset.name)) {
-                            for fan in state.fans { state.applyPreset(fan.index, curve: preset.curve) }
+                            state.requireHelper(.presetPicked) {
+                                for fan in state.fans { state.applyPreset(fan.index, curve: preset.curve) }
+                            }
                         }
                     }
                 }

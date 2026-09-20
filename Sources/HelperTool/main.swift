@@ -2,7 +2,7 @@
 // Listens on /var/run/fanglass.sock (JSON-lines, one request per connection).
 //
 // Commands:
-//   {"cmd":"ping"}                      → {"ok":true,"version":2}
+//   {"cmd":"ping"}                      → {"ok":true,"version":3}
 //   {"cmd":"hold","fan":0,"rpm":2500}   → hold fan at rpm; helper re-asserts every 1s
 //   {"cmd":"auto","fan":0}              → return fan to system control
 //   {"cmd":"autoAll"}                   → all fans back to system control
@@ -13,7 +13,7 @@
 // SIGTERM/SIGINT restore auto before exiting.
 import Foundation
 
-let socketPath = "/var/run/fanglass.sock"
+let socketPath = HelperProtocol.socketPath
 let watchdogInterval: TimeInterval = 20
 
 struct Request: Decodable {
@@ -90,7 +90,7 @@ final class Helper {
         touch()
         switch req.cmd {
         case "ping":
-            return ["ok": true, "version": 2]
+            return ["ok": true, "version": HelperProtocol.version]
         case "hold":
             guard let fan = req.fan, let rpm = req.rpm else { return ["ok": false, "error": "missing fan/rpm"] }
             setHold(fan: fan, rpm: rpm)

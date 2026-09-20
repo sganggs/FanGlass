@@ -161,6 +161,30 @@ struct AppSettings: Codable {
     var launchAtLogin: Bool = false
     var restoreAutoOnQuit: Bool = true
     var fans: [String: FanConfig] = [:]     // fan index (as string) → config
+    /// The unprompted first-launch helper offer fires exactly once.
+    var helperOnboardingShown: Bool = false
+    /// Highest helper protocol version we have already offered to update to.
+    var lastPromptedHelperVersion: Int = 0
+
+    init() {}
+
+    /// Decode every field leniently. Synthesized Codable throws on a key that a
+    /// settings.json written by an older build does not have yet, and
+    /// SettingsStore.load() turns any throw into "reset everything to defaults" —
+    /// so adding a field would silently wipe the user's fan curves.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppSettings()
+        pollInterval = try c.decodeIfPresent(Double.self, forKey: .pollInterval) ?? d.pollInterval
+        hysteresisRPM = try c.decodeIfPresent(Double.self, forKey: .hysteresisRPM) ?? d.hysteresisRPM
+        overheatThreshold = try c.decodeIfPresent(Double.self, forKey: .overheatThreshold) ?? d.overheatThreshold
+        controlSource = try c.decodeIfPresent(String.self, forKey: .controlSource) ?? d.controlSource
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
+        restoreAutoOnQuit = try c.decodeIfPresent(Bool.self, forKey: .restoreAutoOnQuit) ?? d.restoreAutoOnQuit
+        fans = try c.decodeIfPresent([String: FanConfig].self, forKey: .fans) ?? d.fans
+        helperOnboardingShown = try c.decodeIfPresent(Bool.self, forKey: .helperOnboardingShown) ?? d.helperOnboardingShown
+        lastPromptedHelperVersion = try c.decodeIfPresent(Int.self, forKey: .lastPromptedHelperVersion) ?? d.lastPromptedHelperVersion
+    }
 
     func fanConfig(for index: Int) -> FanConfig {
         fans[String(index)] ?? FanConfig()

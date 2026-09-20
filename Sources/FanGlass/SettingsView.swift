@@ -4,8 +4,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     var onScrolled: ((Bool) -> Void)? = nil
-    @State private var helperBusy = false
-    @State private var helperNote: String?
 
     var body: some View {
         GlassScrollView(topMargin: 68, onScrolled: onScrolled) {
@@ -141,108 +139,61 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - privileged helper
+
+    private var busy: Bool { state.installPhase.isBusy }
+
+    private var helperDetail: String {
+        guard let version = state.helperVersion else { return "未安装" }
+        return state.helperOutdated ? "版本过旧(v\(version))" : "运行中 · v\(version)"
+    }
+
     private var helperCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                GlassSectionHeader(
-                    title: "特权助手",
-                    detail: state.helperAvailable ? "运行中" : "未安装"
-                )
+                GlassSectionHeader(title: "特权助手", detail: helperDetail)
 
                 Text("风扇转速的写入需要 root 权限,由后台特权助手完成。传感器读取无需权限。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
 
+                if state.helperOutdated {
+                    Text("已安装的助手是旧版本(v\(state.helperVersion ?? 0),需要 v\(HelperProtocol.version)),更新后新指令才能生效。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                }
+
                 HStack(spacing: 10) {
                     if !state.helperAvailable {
-                        Button("安装助手…") { runScript("install.sh") }
+                        Button("安装助手…") { state.beginInstall() }
                             .buttonStyle(LiquidButtonStyle(prominent: true))
-                            .disabled(helperBusy)
+                            .disabled(busy)
                     } else {
-                        Button("重新安装助手…") { runScript("install.sh") }
+                        Button(state.helperOutdated ? "更新助手…" : "重新安装助手…") { state.beginInstall() }
+                            .buttonStyle(LiquidButtonStyle(prominent: state.helperOutdated))
+                            .disabled(busy)
+                        Button("卸载助手…") { state.uninstallHelper() }
                             .buttonStyle(LiquidButtonStyle())
-                            .disabled(helperBusy)
-                        Button("卸载助手…") { runScript("uninstall.sh") }
-                            .buttonStyle(LiquidButtonStyle())
-                            .disabled(helperBusy)
+                            .disabled(busy)
                     }
                     Spacer()
                     Button("刷新状态") { state.refreshHelperStatus() }
                         .buttonStyle(LiquidButtonStyle())
-                        .disabled(helperBusy)
+                        .disabled(busy)
                 }
 
-                if helperBusy {
+                if busy {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("正在请求管理员授权…")
+                        Text(state.installPhase.note ?? "")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
-                } else if let helperNote {
-                    Text(helperNote)
+                } else if let note = state.installPhase.note {
+                    Text(note)
                         .font(.system(size: 11))
-                        .foregroundStyle(state.helperAvailable ? .secondary : Color.orange)
+                        .foregroundStyle(state.installPhase.isProblem ? Color.orange : .secondary)
                 }
-            }
-        }
-    }
-
-    private func runScript(_ name: String) {
-        guard let script = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "scripts") else {
-            helperNote = "找不到 \(name)"
-            return
-        }
-        helperBusy = true
-        helperNote = nil
-
-        let helperURL = Bundle.main.url(forResource: "fanglass-helper", withExtension: nil)
-        let plistURL = Bundle.main.url(forResource: "com.fanglass.helper", withExtension: "plist")
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = [script.path]
-            var env = ProcessInfo.processInfo.environment
-            if let helperURL { env["FANGLASS_HELPER"] = helperURL.path }
-            if let plistURL { env["FANGLASS_PLIST"] = plistURL.path }
-            process.environment = env
-            let outPipe = Pipe()
-            let errPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError = errPipe
-
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                DispatchQueue.main.async {
-                    helperBusy = false
-                    helperNote = error.localizedDescription
-                }
-                return
-            }
-
-            let errText = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let ok = process.terminationStatus == 0
-            let canceled = errText.localizedCaseInsensitiveContains("canceled")
-                || errText.localizedCaseInsensitiveContains("cancelled")
-                || errText.contains("(-128)")
-
-            DispatchQueue.main.async {
-                helperBusy = false
-                if ok {
-                    helperNote = name.contains("uninstall") ? "助手已卸载" : "助手已安装"
-                } else if canceled {
-                    helperNote = "已取消授权"
-                } else if errText.isEmpty {
-                    helperNote = "操作失败（退出码 \(process.terminationStatus)）"
-                } else {
-                    helperNote = errText
-                }
-                state.refreshHelperStatus()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { state.refreshHelperStatus() }
             }
         }
     }
