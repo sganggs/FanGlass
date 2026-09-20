@@ -18,7 +18,11 @@ struct DashboardView: View {
                     emptyState
                 } else {
                     overviewCard
-                    GlassSectionHeader(title: "传感器", detail: "\(state.groups.reduce(0) { $0 + $1.keys.count }) 个探头")
+                    GlassSectionHeader(
+                        title: String(localized: "Sensors"),
+                        detail: String(format: String(localized: "%lld probes"),
+                                       state.groups.reduce(0) { $0 + $1.keys.count })
+                    )
                     LazyVGrid(columns: columns, spacing: 14) {
                         ForEach(state.groups) { group in
                             SensorGroupCard(group: group)
@@ -36,7 +40,7 @@ struct DashboardView: View {
         GlassCard {
             HStack(spacing: 12) {
                 ProgressView().controlSize(.small)
-                Text("正在扫描 SMC 传感器…")
+                Text("Scanning SMC sensors…")
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
@@ -50,9 +54,9 @@ struct DashboardView: View {
                 Image(systemName: "thermometer.variable")
                     .font(.system(size: 28))
                     .foregroundStyle(.secondary)
-                Text("未发现可用传感器")
+                Text("No sensors found")
                     .font(.headline)
-                Text("无法从 SMC 读取温度数据。")
+                Text("Could not read temperature data from the SMC.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -65,10 +69,10 @@ struct DashboardView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("温度趋势")
+                    Text("Temperature trend")
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
-                    Text(String(format: "最热 %.0f°C", state.hottestTemperature))
+                    Text(String(format: String(localized: "Hottest %.0f°C"), state.hottestTemperature))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(state.temperatureColor(state.hottestTemperature))
                 }
@@ -78,11 +82,11 @@ struct DashboardView: View {
                     ForEach(Array(series), id: \.id) { group in
                         ForEach(group.history, id: \.time) { sample in
                             LineMark(
-                                x: .value("时间", sample.time),
-                                y: .value("温度", sample.value),
-                                series: .value("组", group.name)
+                                x: .value(String(localized: "Time"), sample.time),
+                                y: .value(String(localized: "Temperature"), sample.value),
+                                series: .value(String(localized: "Group"), group.name)
                             )
-                            .foregroundStyle(by: .value("组", group.name))
+                            .foregroundStyle(by: .value(String(localized: "Group"), group.name))
                             .interpolationMethod(.catmullRom)
                             .lineStyle(StrokeStyle(lineWidth: 1.8))
                         }
@@ -139,7 +143,9 @@ struct SensorGroupCard: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(group.keys.count)")
+                    // The probe count is a bare number: String(), not a
+                    // LocalizedStringKey that would resolve to "%lld".
+                    Text(String(group.keys.count))
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 6)

@@ -80,11 +80,13 @@ enum CurveMath {
 enum FanControlMode: String, Codable, CaseIterable, Identifiable {
     case auto, fixed, curve
     var id: String { rawValue }
+    /// Flows through a plain `String` (LiquidSegmentedPicker takes titles, not
+    /// keys), so it has to be localized here rather than by SwiftUI.
     var title: String {
         switch self {
-        case .auto: return "自动"
-        case .fixed: return "固定转速"
-        case .curve: return "曲线"
+        case .auto: return String(localized: "Auto")
+        case .fixed: return String(localized: "Fixed")
+        case .curve: return String(localized: "Curve")
         }
     }
 }
@@ -136,20 +138,38 @@ struct FanConfig: Codable, Equatable {
     ]
 
     /// Presets selectable in the UI.
-    static let presets: [(name: String, curve: [CurvePoint])] = [
-        ("静音", [
+    static let presets: [FanPreset] = [
+        FanPreset(id: "quiet", curve: [
             CurvePoint(temp: 30, percent: 0), CurvePoint(temp: 60, percent: 10),
             CurvePoint(temp: 75, percent: 28), CurvePoint(temp: 88, percent: 60),
             CurvePoint(temp: 96, percent: 100),
         ]),
-        ("均衡", FanConfig.defaultCurve),
-        ("性能", [
+        FanPreset(id: "balanced", curve: FanConfig.defaultCurve),
+        FanPreset(id: "performance", curve: [
             CurvePoint(temp: 30, percent: 25), CurvePoint(temp: 50, percent: 45),
             CurvePoint(temp: 65, percent: 70), CurvePoint(temp: 78, percent: 90),
             CurvePoint(temp: 88, percent: 100),
         ]),
-        ("全速", [CurvePoint(temp: 0, percent: 100), CurvePoint(temp: 100, percent: 100)]),
+        FanPreset(id: "max", curve: [CurvePoint(temp: 0, percent: 100),
+                                     CurvePoint(temp: 100, percent: 100)]),
     ]
+}
+
+/// A curve preset. The `id` is the stable identity everything compares and
+/// persists against; `title` is display-only and changes with the UI language,
+/// so it must never be used to decide which preset a fan is on.
+struct FanPreset: Identifiable, Equatable {
+    let id: String
+    let curve: [CurvePoint]
+
+    var title: String {
+        switch id {
+        case "quiet":       return String(localized: "Quiet")
+        case "balanced":    return String(localized: "Balanced")
+        case "performance": return String(localized: "Performance")
+        default:            return String(localized: "Max")
+        }
+    }
 }
 
 // MARK: - Selection (what the UI highlights)
@@ -158,6 +178,7 @@ struct FanConfig: Codable, Equatable {
 /// the last click, so the highlight survives relaunch and follows hand edits.
 enum FanSelection: Equatable {
     case auto
+    /// Carries the preset's stable id, never its localized title.
     case preset(String)
     case customCurve
     case fixed
@@ -179,18 +200,22 @@ extension FanConfig {
         return true
     }
 
-    /// Name of the preset this curve equals, or nil once the user edited it.
-    var matchingPresetName: String? {
-        FanConfig.presets.first { FanConfig.curveMatches($0.curve, curve) }?.name
+    /// Stable id of the preset this curve equals, or nil once the user edited
+    /// it. Deliberately the id and not the title: the title is localized, so
+    /// matching on it would break the highlight the moment the UI language
+    /// changed (and would compare a display string against saved data).
+    var matchingPresetID: String? {
+        FanConfig.presets.first { FanConfig.curveMatches($0.curve, curve) }?.id
     }
 
-    /// A brand-new config is .auto, so the fact that defaultCurve IS the 均衡
-    /// preset only shows up once the fan is actually switched to curve mode.
+    /// A brand-new config is .auto, so the fact that defaultCurve IS the
+    /// "balanced" preset only shows up once the fan is actually switched to
+    /// curve mode.
     var selection: FanSelection {
         switch mode {
         case .auto:  return .auto
         case .fixed: return .fixed
-        case .curve: return matchingPresetName.map(FanSelection.preset) ?? .customCurve
+        case .curve: return matchingPresetID.map(FanSelection.preset) ?? .customCurve
         }
     }
 }

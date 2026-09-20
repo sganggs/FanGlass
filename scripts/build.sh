@@ -53,6 +53,18 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/scripts"
 cp "$BUILD/FanGlass" "$APP/Contents/MacOS/FanGlass"
 cp "$DIR/Resources/Info.plist" "$APP/Contents/Info.plist"
+# Localizations. English source strings are the keys, so en.lproj is an
+# identity table — it exists so the bundle advertises English at all, which is
+# what makes the language list (and the in-app override) offer it.
+for LPROJ in "$DIR/Resources"/*.lproj; do
+    [ -d "$LPROJ" ] || continue
+    STRINGS="$LPROJ/Localizable.strings"
+    if [ -f "$STRINGS" ]; then
+        plutil -lint "$STRINGS" >/dev/null \
+            || { echo "error: $STRINGS is not a valid strings file" >&2; exit 1; }
+    fi
+    cp -R "$LPROJ" "$APP/Contents/Resources/"
+done
 # Bundle the helper + installer so the app can (re)install it from Settings.
 cp "$BUILD/fanglass-helper" "$APP/Contents/Resources/fanglass-helper"
 cp "$DIR/Resources/com.fanglass.helper.plist" "$APP/Contents/Resources/com.fanglass.helper.plist"
@@ -82,7 +94,7 @@ echo "▸ signing (ad-hoc)…"
 # on the bundle, and codesign refuses it ("resource fork, Finder information, or
 # similar detritus not allowed"). This used to be silenced with `|| true`, which
 # shipped a bundle carrying only swiftc's linker signature — no sealed resources,
-# which Gatekeeper reports to the downloader as 已损坏 with no way to open it.
+# which Gatekeeper reports to the downloader as damaged, with no way to open it.
 xattr -cr "$APP"
 codesign --force --deep --sign - "$APP"
 # The file provider re-stamps FinderInfo within seconds of the bundle changing,

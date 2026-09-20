@@ -10,7 +10,7 @@ struct MenuBarView: View {
             // header: hottest temp + fan rpm
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("最热传感器")
+                    Text("Hottest sensor")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -26,7 +26,7 @@ struct MenuBarView: View {
                 if !state.fans.isEmpty {
                     VStack(alignment: .trailing, spacing: 2) {
                         // With two or more fans this is the fastest one, not fan 0.
-                        Text(state.fans.count > 1 ? "最高转速" : "风扇转速")
+                        Text(state.fans.count > 1 ? "Top fan speed" : "Fan speed")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -37,7 +37,7 @@ struct MenuBarView: View {
                                 .foregroundStyle(.secondary)
                         }
                         if state.fans.count > 1 {
-                            Text("共 \(state.fans.count) 个风扇")
+                            Text("\(state.fans.count) fans in total")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                         }
@@ -74,7 +74,9 @@ struct MenuBarView: View {
                     Image(systemName: "fan.slash")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                    Text(state.fans.isEmpty ? "本机无可控风扇" : "此机型暂不支持风扇控制")
+                    Text(state.fans.isEmpty
+                         ? "This Mac has no controllable fans"
+                         : "Fan control is not supported on this Mac")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -83,10 +85,10 @@ struct MenuBarView: View {
             Divider().opacity(0.4)
 
             HStack {
-                Button("打开 FanGlass") { openMainWindow() }
+                Button("Open FanGlass") { openMainWindow() }
                     .buttonStyle(LiquidButtonStyle(prominent: true))
                 Spacer()
-                Button("退出") { NSApp.terminate(nil) }
+                Button("Quit") { NSApp.terminate(nil) }
                     .buttonStyle(LiquidButtonStyle())
             }
         }
@@ -99,7 +101,7 @@ struct MenuBarView: View {
 
     private var quickModes: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("快捷模式(应用于所有风扇)")
+            Text("Quick modes (applies to all fans)")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
 
@@ -110,13 +112,13 @@ struct MenuBarView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
-                    Text("未安装特权助手,选择的模式不会生效")
+                    Text("Helper not installed; the mode you pick will not take effect")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
                     // Straight to the password dialog — sending the user to
                     // the Settings tab to find the card is three clicks more.
-                    Button("安装") { state.requestHelperInstall(reason: .banner) }
+                    Button("Install") { state.requestHelperInstall(reason: .banner) }
                         .buttonStyle(LiquidButtonStyle(compact: true))
                         .fixedSize()
                 }
@@ -128,11 +130,11 @@ struct MenuBarView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
-                    Text("特权助手版本过旧，部分指令可能不生效")
+                    Text("Helper is outdated; some commands may not take effect")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
-                    Button("更新") { state.requestHelperInstall(reason: .outdated) }
+                    Button("Update") { state.requestHelperInstall(reason: .outdated) }
                         .buttonStyle(LiquidButtonStyle(compact: true))
                         .fixedSize()
                 }
@@ -143,21 +145,22 @@ struct MenuBarView: View {
                         .foregroundStyle(.orange)
                     // Only curve-mode fans are handed back; a fan pinned to a
                     // fixed RPM keeps its target, so do not claim otherwise.
-                    Text("传感器读取失败，曲线模式已恢复系统自动控制")
+                    Text("Sensor read failed; curve mode is back on automatic control")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            // Equal-width compact pills: a 300-pt panel cannot fit five
-            // default LiquidButtons, and HStack then crushes the leading
-            // ones ("自动" / "静音") into "…".
-            HStack(spacing: 5) {
-                compactModeButton("自动", active: selection == .auto) {
+            // One row of equal-width pills while the labels fit (Simplified
+            // Chinese always does), wrapping at natural widths when they do
+            // not — five English labels in a 296-pt box cannot share it
+            // equally without every one of them truncating to "…".
+            AdaptivePillRow(spacing: 5) {
+                compactModeButton(String(localized: "Auto"), active: selection == .auto) {
                     state.restoreAutoAll()
                 }
-                ForEach(FanConfig.presets, id: \.name) { preset in
-                    compactModeButton(preset.name, active: selection == .preset(preset.name)) {
+                ForEach(FanConfig.presets) { preset in
+                    compactModeButton(preset.title, active: selection == .preset(preset.id)) {
                         state.requireHelper(.presetPicked) {
                             for fan in state.fans { state.applyPreset(fan.index, curve: preset.curve) }
                         }
@@ -165,8 +168,8 @@ struct MenuBarView: View {
                 }
             }
 
-            // Covers 自定义曲线 / 固定转速 / mixed fans, so an all-dark row is
-            // never left unexplained.
+            // Covers a custom curve / a fixed speed / mixed fans, so an
+            // all-dark row is never left unexplained.
             if let hint = state.quickModeHint {
                 Text(hint)
                     .font(.system(size: 10))
@@ -185,8 +188,7 @@ struct MenuBarView: View {
             // Never dimmed, helper or not: clicking one of these pills is the
             // main path to the install prompt, so they must read as clickable.
             // The warning row above carries the "will not take effect" signal.
-            .frame(maxWidth: .infinity)
-            .layoutPriority(1)
+            // Widths belong to AdaptivePillRow, not to the button.
     }
 
     private func openMainWindow(tab: AppTab? = nil) {

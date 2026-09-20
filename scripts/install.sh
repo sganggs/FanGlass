@@ -118,7 +118,7 @@ for attempt in 1 2 3 4 5; do
     fi
     sleep 0.5
 done
-[ \$booted -eq 1 ] || { echo "launchctl 无法启动 com.fanglass.helper(bootstrap 连续失败 5 次)" >&2; exit 1; }
+[ \$booted -eq 1 ] || { echo "launchctl could not start com.fanglass.helper (bootstrap failed 5 times in a row)" >&2; exit 1; }
 # bootstrap returns as soon as the job is accepted, not when the daemon has
 # bound its socket — and a booted-out daemon leaves its socket FILE behind, so
 # a test on the path proves nothing. Prove readiness by talking to it: only a
@@ -137,16 +137,21 @@ while [ \$n -lt 30 ]; do
     sleep 0.2
     n=\$((n + 1))
 done
-[ \$ready -eq 1 ] || { echo "助手未在 /var/run/fanglass.sock 上应答 v$HELPER_VERSION ping" >&2; exit 1; }
+[ \$ready -eq 1 ] || { echo "the helper did not answer a v$HELPER_VERSION ping on /var/run/fanglass.sock" >&2; exit 1; }
 EOF
 )"
 
-# The script text is passed as an argument, not interpolated into AppleScript
-# source — a path or digest can never terminate the string literal.
+# The dialog wording follows the app's UI language; FanGlass passes it in.
+# Run by hand from a terminal, the script speaks English.
+PROMPT="${FANGLASS_PROMPT:-FanGlass needs to install a privileged helper to control fan speed.}"
+
+# Both the script text and the prompt are passed as arguments, not interpolated
+# into AppleScript source — a path, a digest or a translation can never
+# terminate the string literal.
 # Don't swallow osascript errors — the app surfaces stderr if auth is canceled.
-if ! osascript - "$PRIV_SCRIPT" <<'APPLESCRIPT'
+if ! osascript - "$PRIV_SCRIPT" "$PROMPT" <<'APPLESCRIPT'
 on run argv
-    do shell script (item 1 of argv) with administrator privileges with prompt "FanGlass 需要安装特权助手来控制风扇转速。"
+    do shell script (item 1 of argv) with administrator privileges with prompt (item 2 of argv)
 end run
 APPLESCRIPT
 then

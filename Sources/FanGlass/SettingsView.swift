@@ -1,9 +1,16 @@
-// SettingsView.swift — polling, control source, hysteresis, alerts, helper management.
+// SettingsView.swift — language, polling, control source, hysteresis, alerts, helper management.
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     var onScrolled: ((Bool) -> Void)? = nil
+
+    /// The picker's own copy of the choice. `AppLanguage.current` reads
+    /// UserDefaults, which is not observable, so the picker needs state.
+    @State private var language: AppLanguage = .current
+    /// Set once the user picks a different language; the note (and its
+    /// "Relaunch now" button) stays until they relaunch or dismiss it.
+    @State private var languageNeedsRelaunch = false
 
     var body: some View {
         GlassScrollView(topMargin: 68, onScrolled: onScrolled) {
@@ -22,13 +29,53 @@ struct SettingsView: View {
     private var generalCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                GlassSectionHeader(title: "通用")
+                GlassSectionHeader(title: String(localized: "General"))
 
                 HStack {
-                    Text("采样间隔")
+                    Text("Language")
                         .font(.system(size: 12))
                     Spacer()
-                    Text(String(format: "%.1f 秒", state.settings.pollInterval))
+                    Picker("", selection: Binding(
+                        get: { language },
+                        set: { newValue in
+                            guard newValue != language else { return }
+                            language = newValue
+                            newValue.apply()
+                            languageNeedsRelaunch = true
+                        }
+                    )) {
+                        // Each language names itself; "System" follows macOS.
+                        ForEach(AppLanguage.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 180)
+                }
+
+                if languageNeedsRelaunch {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(GlassPalette.accent)
+                        Text("The new language is applied the next time FanGlass starts.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Button("Relaunch now") { AppRelaunch.now() }
+                            .buttonStyle(LiquidButtonStyle(compact: true, active: true))
+                            .fixedSize()
+                        Button("Later") { languageNeedsRelaunch = false }
+                            .buttonStyle(LiquidButtonStyle(compact: true))
+                            .fixedSize()
+                    }
+                }
+
+                HStack {
+                    Text("Sampling interval")
+                        .font(.system(size: 12))
+                    Spacer()
+                    Text(String(format: String(localized: "%.1f s"), state.settings.pollInterval))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
@@ -44,7 +91,7 @@ struct SettingsView: View {
                 )
                 .tint(GlassPalette.accent)
 
-                Toggle("登录时启动", isOn: Binding(
+                Toggle("Launch at login", isOn: Binding(
                     get: { state.settings.launchAtLogin },
                     set: { v in
                         state.settings.launchAtLogin = v
@@ -53,7 +100,7 @@ struct SettingsView: View {
                 ))
                 .font(.system(size: 12))
 
-                Toggle("退出时立即恢复风扇自动控制", isOn: Binding(
+                Toggle("Restore automatic fan control immediately on quit", isOn: Binding(
                     get: { state.settings.restoreAutoOnQuit },
                     set: { v in state.settings.restoreAutoOnQuit = v }
                 ))
@@ -63,7 +110,7 @@ struct SettingsView: View {
                 // FanGlass stops sending its heartbeat the helper's watchdog
                 // hands the fans back anyway. Say which of the two it picks
                 // rather than implying a third behaviour that does not exist.
-                Text("关闭此选项后,退出时不会立即恢复;但助手在约 20 秒内收不到 FanGlass 的心跳,仍会自动把风扇交还系统控制。")
+                Text("With this off, fans are not restored the moment you quit; but once the helper has gone about 20 seconds without a heartbeat from FanGlass it hands them back to the system anyway.")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
@@ -73,10 +120,10 @@ struct SettingsView: View {
     private var controlCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                GlassSectionHeader(title: "控制")
+                GlassSectionHeader(title: String(localized: "Control"))
 
                 HStack {
-                    Text("曲线温度源")
+                    Text("Curve temperature source")
                         .font(.system(size: 12))
                     Spacer()
                     Picker("", selection: Binding(
@@ -86,10 +133,12 @@ struct SettingsView: View {
                         ForEach(state.groups.filter { $0.id != "ambient" && $0.id != "other" }) { group in
                             Text(group.name).tag(group.id)
                         }
-                        Text("最热传感器").tag("max")
+                        Text("Hottest sensor").tag("max")
                     }
                     .pickerStyle(.menu)
-                    .frame(width: 160)
+                    // 180, not 160: "Hottest sensor" is a third wider than
+                    // the Chinese label it replaces.
+                    .frame(width: 180)
                 }
 
                 // Key families differ per chip generation, so a curve carried
@@ -97,13 +146,13 @@ struct SettingsView: View {
                 // have. Substituting a different signal silently is exactly the
                 // kind of thing a fan controller must never do.
                 if state.controlSourceMissing {
-                    Text("所选控制源在本机型不可用,已改用最热传感器。")
+                    Text("The selected control source is not available on this Mac; the hottest sensor is used instead.")
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
                 }
 
                 HStack {
-                    Text("转速迟滞")
+                    Text("RPM hysteresis")
                         .font(.system(size: 12))
                     Spacer()
                     Text(String(format: "%.0f RPM", state.settings.hysteresisRPM))
@@ -119,7 +168,7 @@ struct SettingsView: View {
                 )
                 .tint(GlassPalette.accent)
 
-                Text("迟滞可避免转速在边界值附近频繁抖动;设 0 则每次采样都更新。")
+                Text("Hysteresis keeps the fan speed from jittering around a boundary value; set it to 0 to update on every sample.")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
@@ -129,14 +178,14 @@ struct SettingsView: View {
     private var alertCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                GlassSectionHeader(title: "过热提醒")
+                GlassSectionHeader(title: String(localized: "Overheat alert"))
 
                 HStack {
-                    Text("温度阈值")
+                    Text("Temperature threshold")
                         .font(.system(size: 12))
                     Spacer()
                     Text(state.settings.overheatThreshold <= 0
-                         ? "已关闭"
+                         ? String(localized: "Off")
                          : String(format: "%.0f°C", state.settings.overheatThreshold))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -150,7 +199,7 @@ struct SettingsView: View {
                 )
                 .tint(.orange)
 
-                Text("任一传感器(除环境和其他)超过阈值时发送系统通知;拖到最左关闭。")
+                Text("Sends a system notification when any sensor (except Ambient and Other) goes over the threshold; drag to the far left to switch it off.")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
@@ -162,40 +211,43 @@ struct SettingsView: View {
     private var busy: Bool { state.installPhase.isBusy }
 
     private var helperDetail: String {
-        guard let version = state.helperVersion else { return "未安装" }
-        return state.helperOutdated ? "版本过旧(v\(version))" : "运行中 · v\(version)"
+        guard let version = state.helperVersion else { return String(localized: "Not installed") }
+        return state.helperOutdated
+            ? String(format: String(localized: "Outdated (v%lld)"), version)
+            : String(format: String(localized: "Running · v%lld"), version)
     }
 
     private var helperCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                GlassSectionHeader(title: "特权助手", detail: helperDetail)
+                GlassSectionHeader(title: String(localized: "Privileged Helper"), detail: helperDetail)
 
-                Text("风扇转速的写入需要 root 权限,由后台特权助手完成。传感器读取无需权限。")
+                Text("Writing fan speeds requires root privileges and is done by a background privileged helper. Reading sensors needs no privileges.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
 
                 if state.helperOutdated {
-                    Text("已安装的助手是旧版本(v\(state.helperVersion ?? 0),需要 v\(HelperProtocol.version)),更新后新指令才能生效。")
+                    Text(String(format: String(localized: "The installed helper is an older version (v%lld, v%lld required); update it before the new commands can take effect."),
+                                state.helperVersion ?? 0, HelperProtocol.version))
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                 }
 
                 HStack(spacing: 10) {
                     if !state.helperAvailable {
-                        Button("安装助手…") { state.beginInstall() }
+                        Button("Install Helper…") { state.beginInstall() }
                             .buttonStyle(LiquidButtonStyle(prominent: true))
                             .disabled(busy)
                     } else {
-                        Button(state.helperOutdated ? "更新助手…" : "重新安装助手…") { state.beginInstall() }
+                        Button(state.helperOutdated ? "Update Helper…" : "Reinstall Helper…") { state.beginInstall() }
                             .buttonStyle(LiquidButtonStyle(prominent: state.helperOutdated))
                             .disabled(busy)
-                        Button("卸载助手…") { state.uninstallHelper() }
+                        Button("Uninstall Helper…") { state.uninstallHelper() }
                             .buttonStyle(LiquidButtonStyle())
                             .disabled(busy)
                     }
                     Spacer()
-                    Button("刷新状态") { state.refreshHelperStatus() }
+                    Button("Refresh") { state.refreshHelperStatus() }
                         .buttonStyle(LiquidButtonStyle())
                         .disabled(busy)
                 }

@@ -12,7 +12,7 @@
   <img src="docs/menubar.png" width="330" alt="FanGlass 菜单栏面板">
 </p>
 
-<p align="center"><sub>菜单栏面板：最热传感器温度、风扇转速、各组温度与快捷模式</sub></p>
+<p align="center"><sub>菜单栏面板：最热传感器温度、风扇转速、各组温度与快捷模式（截图为中文界面）</sub></p>
 
 ## 功能
 
@@ -24,6 +24,7 @@
 - **过热提醒**：任一传感器（环境除外）超过阈值时发送系统通知，阈值可调、可关闭
 - **转速迟滞**：0–400 RPM 可调，避免转速在边界值附近反复抖动
 - **状态从不撒谎**：助手未安装 / 版本过旧、SMC 写入被拒、传感器读取失败等情况都会在界面上明确说出来，而不是装作一切正常
+- **中英双语界面**：默认跟随系统语言（简体中文 / English），也可在**设置 → 通用 → 语言**里单独指定，切换后重启生效
 - **持久化**：配置存于 `~/Library/Application Support/FanGlass/settings.json`
 
 ## 安装
@@ -76,7 +77,7 @@ open build/FanGlass.app # 或 ./scripts/run.sh（编译并启动）
   - **自动**：交还 macOS 管理，不需要助手。
   - **固定转速**：滑杆按百分比在 `F{i}Mn..F{i}Mx` 之间取目标值，松手时立即下发。
   - **曲线**：先选一个预设，再直接在图上拖控制点；双击空白添加、右键删除（最少 2 个、最多 8 个）。曲线跟随的温度源在设置里选（默认 CPU，可改为最热传感器）。
-- **设置**：采样间隔（0.5–3 秒）、登录时启动、退出时是否立即恢复自动、曲线温度源、转速迟滞、过热提醒阈值，以及特权助手的安装 / 重新安装 / 卸载。
+- **设置**：界面语言（系统 / 简体中文 / English）、采样间隔（0.5–3 秒）、登录时启动、退出时是否立即恢复自动、曲线温度源、转速迟滞、过热提醒阈值，以及特权助手的安装 / 重新安装 / 卸载。
 
 ## 支持的设备
 
@@ -164,7 +165,7 @@ launchd 会一直运行磁盘上那一份旧守护进程，新版 App 的指令�
 该开关走系统的 `SMAppService`，ad-hoc 签名的构建有可能被系统拒绝注册。这种情况下可以改用「系统设置 → 通用 → 登录项」手动添加 FanGlass。
 
 **界面能切英文吗？**
-目前界面只有简体中文，英文本地化还没做（欢迎 PR）。
+能。界面默认跟随系统语言；想单独指定的话，在**设置 → 通用 → 语言**里选「系统」、「简体中文」或「English」，重启 FanGlass 后生效（该开关写的就是系统自己那一套逐应用语言设置）。
 
 ## 液态玻璃设计
 
@@ -192,7 +193,9 @@ sysctl -n hw.model
 
 代码约定：
 
-- 界面文案为简体中文，代码注释为英文。
+- 代码里的界面文案一律用**英文原文，它同时就是本地化的 key**；中文放在 `Resources/zh-Hans.lproj/Localizable.strings`。新增任何一条文案，都要在 `Resources/en.lproj` 和 `Resources/zh-Hans.lproj` 两个表里各加一行（`build.sh` 会对两个文件跑 `plutil -lint`，不合法就停构建）。不要在 `Sources/` 下留任何中文字符，注释也一样。
+- 任何要经过 Swift `String` 传递的文案（枚举标题、`String(format:)`、`NSAlert`、通知内容等）要自己过一道 `String(localized:)`；SwiftUI 的 `Text` / `Button` / `Toggle` 等收 `LocalizedStringKey` 的接口会自动本地化。
+- 菜单栏的快捷模式胶囊行用 `AdaptivePillRow` 布局：标签装得下就维持今天这一行等宽胶囊（中文如此），装不下就自动换行按自然宽度排（英文如此），不会截断成「…」。
 - 源码目录：`Sources/FanGlass`（App）、`Sources/HelperTool`（root 守护进程）、`Sources/Shared`（SMC 访问与协议，两端共用）。
 - 没有 Xcode 工程，`scripts/build.sh` 直接调 `swiftc`；改完跑一遍它就行。
 - `build.sh` 在签名前会执行 `xattr -cr`：源码放在桌面或 iCloud 同步目录时，bundle 上会带 `com.apple.FinderInfo`，`codesign` 会以 “resource fork, Finder information, or similar detritus not allowed” 失败，而没签好的包在下载者那边会被 Gatekeeper 报成「已损坏」。

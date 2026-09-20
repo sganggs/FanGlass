@@ -3,7 +3,7 @@
 # the READMEs point users at), then verifies that what is inside the zip still
 # passes a strict signature check — the file provider on Desktop / iCloud folders
 # re-stamps com.apple.FinderInfo on the bundle, and a bundle carrying that xattr
-# is reported to downloaders as 已损坏.
+# is reported to downloaders as damaged.
 set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$DIR/build/FanGlass.app"

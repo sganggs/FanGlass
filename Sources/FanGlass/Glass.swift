@@ -170,8 +170,9 @@ struct GlassCard<Content: View>: View {
 
 struct LiquidButtonStyle: ButtonStyle {
     var prominent: Bool = false
-    /// Tighter padding so a row of 2-character Chinese labels still fits
-    /// inside the menu-bar popover without truncating to "…".
+    /// Tighter padding, for the menu-bar popover's quick-mode pills. Its
+    /// metrics (12 pt type, 8 pt of horizontal padding a side) are what
+    /// `AdaptivePillRow` measures against the panel's 296-pt content box.
     var compact: Bool = false
     /// Marks this button as the option currently in effect. The signal lives in
     /// the hairline and the label weight, not in a heavy fill — "glass at the
@@ -275,6 +276,120 @@ struct LiquidButtonStyle: ButtonStyle {
             if active { return GlassPalette.accent.opacity(0.28) }
             return Color.black.opacity(0.07)
         }
+    }
+}
+
+// MARK: - adaptive pill row (equal width while it fits, wrapping when it does not)
+
+/// Lays a row of pills out the way the menu-bar panel always has — one row of
+/// equal-width pills — for as long as the WIDEST label fits its share, and
+/// wraps onto further rows at each pill's natural width when it does not.
+///
+/// The panel's content box is 296 pt (328 − 2×16 padding). Five 2-character
+/// Simplified Chinese labels need 40 pt each against a 55.2 pt share, so they
+/// still get the single equal-width row. Their English counterparts do not:
+/// "Performance" alone measures 93 pt at 12 pt semibold + 16 pt padding, five
+/// equal columns would want 485 pt, and every label would truncate to "…".
+/// Wrapping is the honest answer — shrinking the type or the panel is not.
+struct AdaptivePillRow: Layout {
+    var spacing: CGFloat = 5
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        plan(subviews: subviews, width: proposal.width).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout Void) {
+        let plan = plan(subviews: subviews, width: bounds.width)
+        var y = bounds.minY
+        for row in plan.rows {
+            var x = bounds.minX
+            for index in row {
+                let width = plan.widths[index]
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: width, height: plan.rowHeight)
+                )
+                x += width + spacing
+            }
+            y += plan.rowHeight + spacing
+        }
+    }
+
+    private struct Plan {
+        var rows: [[Int]] = []       // subview indexes, in order
+        var widths: [CGFloat] = []   // width each subview is placed at
+        var rowHeight: CGFloat = 0
+        var size: CGSize = .zero
+    }
+
+    private func plan(subviews: Subviews, width: CGFloat?) -> Plan {
+        var plan = Plan()
+        guard !subviews.isEmpty else { return plan }
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let widths = sizes.map(\.width)
+        let count = subviews.count
+        let n = CGFloat(count)
+        let gaps = spacing * (n - 1)
+        let widest = widths.max() ?? 0
+        plan.rowHeight = sizes.map(\.height).max() ?? 0
+
+        // Measurement passes propose zero or infinity; answer with the natural
+        // one-row size rather than "every pill on its own row".
+        guard let available = width, available.isFinite, available > 0 else {
+            plan.rows = [Array(subviews.indices)]
+            plan.widths = Array(repeating: widest, count: count)
+            plan.size = CGSize(width: widest * n + gaps, height: plan.rowHeight)
+            return plan
+        }
+
+        if widest * n + gaps <= available {
+            let each = (available - gaps) / n
+            plan.rows = [Array(subviews.indices)]
+            plan.widths = Array(repeating: each, count: count)
+            plan.size = CGSize(width: available, height: plan.rowHeight)
+            return plan
+        }
+
+        // Fewest rows that fit, then spread the pills evenly across them: a
+        // plain greedy fill packs four English labels into the first row and
+        // leaves "Max" orphaned under them.
+        plan.widths = widths
+        let minimum = pack(widths, available: available, cap: count).count
+        let cap = Int((Double(count) / Double(minimum)).rounded(.up))
+        var rows = pack(widths, available: available, cap: cap)
+        if rows.count > minimum { rows = pack(widths, available: available, cap: count) }
+        plan.rows = rows
+        plan.size = CGSize(
+            width: available,
+            height: CGFloat(rows.count) * plan.rowHeight + CGFloat(rows.count - 1) * spacing
+        )
+        return plan
+    }
+
+    /// Left-to-right fill, breaking when the next pill would overflow the row
+    /// or when the row already holds `cap` of them.
+    private func pack(_ widths: [CGFloat], available: CGFloat, cap: Int) -> [[Int]] {
+        var rows: [[Int]] = [[]]
+        var used: CGFloat = 0
+        for (index, width) in widths.enumerated() {
+            let last = rows.count - 1
+            if rows[last].isEmpty {
+                rows[last].append(index)
+                used = width
+                continue
+            }
+            let extended = used + spacing + width
+            if extended > available || rows[last].count >= cap {
+                rows.append([index])
+                used = width
+            } else {
+                rows[last].append(index)
+                used = extended
+            }
+        }
+        return rows
     }
 }
 

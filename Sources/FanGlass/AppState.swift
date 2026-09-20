@@ -17,11 +17,14 @@ struct SensorSample: Equatable {
 }
 
 struct SensorGroupState: Identifiable {
+    /// Stable classification id ("cpu", "gpu", …). Everything that compares,
+    /// sorts or persists a group uses this; `name` is display-only.
     let id: String
-    let name: String
     var keys: [String]
     var value: Double = 0
     var history: [SensorSample] = []
+
+    var name: String { AppState.groupName(id) }
 }
 
 @MainActor
@@ -163,17 +166,17 @@ final class AppState: ObservableObject {
         // instant: power-gated blocks read 0 °C while their domain is asleep and
         // would otherwise be excluded for the whole session. Each sample is
         // range-checked in pollOnce instead.
-        var classified: [(id: String, name: String, key: String, value: Double?)] = []
+        var classified: [(id: String, key: String, value: Double?)] = []
         for key in keys where key.hasPrefix("T") {
-            guard let raw = smc.readFloat(key), let c = AppState.classify(key: key) else { continue }
-            classified.append((c.id, c.name, key, AppState.plausible(raw) ? raw : nil))
+            guard let raw = smc.readFloat(key), let id = AppState.classify(key: key) else { continue }
+            classified.append((id, key, AppState.plausible(raw) ? raw : nil))
         }
         var order: [String] = []
         var byID: [String: SensorGroupState] = [:]
         var evidence: Set<String> = []   // groups that produced a real reading
         for item in classified {
             if byID[item.id] == nil {
-                byID[item.id] = SensorGroupState(id: item.id, name: item.name, keys: [])
+                byID[item.id] = SensorGroupState(id: item.id, keys: [])
                 order.append(item.id)
             }
             guard var group = byID[item.id] else { continue }
@@ -238,45 +241,60 @@ final class AppState: ObservableObject {
     /// that report 0 °C while their domain is asleep.
     nonisolated static func plausible(_ value: Double) -> Bool { value > 5 && value < 150 }
 
-    /// SMC key prefix → sensor group. Apple moves the core sensors to a new key
-    /// family every few chip generations, so the table names the generation each
-    /// rule is for; anything unrecognised lands in 其他 rather than being
-    /// mislabelled as something it is not.
+    /// SMC key prefix → sensor group id. Apple moves the core sensors to a new
+    /// key family every few chip generations, so the table names the generation
+    /// each rule is for; anything unrecognised lands in "other" rather than
+    /// being mislabelled as something it is not.
     ///   M1 / M2 / M4 / M5   CPU P-cores Tp*, E-cores Te*, GPU Tg*
     ///   M3                  CPU Tf0*/Tf4*, GPU Tf1*/Tf2*  (no Tp*/Tg* at all)
     ///   Intel               CPU TC0*/TCA*, GPU TG0*
-    nonisolated private static func classify(key: String) -> (id: String, name: String)? {
-        if key == "TVA0" { return ("ambient", "环境") }
-        if key.hasPrefix("Tp") { return ("cpu", "CPU") }
-        if key.hasPrefix("Te") { return ("cpu", "CPU") }        // efficiency cores (M3/M4)
+    nonisolated private static func classify(key: String) -> String? {
+        if key == "TVA0" { return "ambient" }
+        if key.hasPrefix("Tp") { return "cpu" }
+        if key.hasPrefix("Te") { return "cpu" }        // efficiency cores (M3/M4)
         if key.hasPrefix("Tf") {
             // M3 splits CPU and GPU by the second nibble. M4's TfC0/TfC1 are
             // neither and stay unclassified.
             switch key.dropFirst(2).first {
-            case "0", "4": return ("cpu", "CPU")
-            case "1", "2": return ("gpu", "GPU")
-            default: return ("other", "其他")
+            case "0", "4": return "cpu"
+            case "1", "2": return "gpu"
+            default: return "other"
             }
         }
-        if key.hasPrefix("Tg") { return ("gpu", "GPU") }
-        if key.hasPrefix("TC0") || key.hasPrefix("TCA") { return ("cpu", "CPU") }   // Intel
-        if key.hasPrefix("TG0") { return ("gpu", "GPU") }                           // Intel
-        if key.hasPrefix("Tm") { return ("memory", "内存") }
-        if key.hasPrefix("Ts") { return ("system", "系统") }
+        if key.hasPrefix("Tg") { return "gpu" }
+        if key.hasPrefix("TC0") || key.hasPrefix("TCA") { return "cpu" }   // Intel
+        if key.hasPrefix("TG0") { return "gpu" }                           // Intel
+        if key.hasPrefix("Tm") { return "memory" }
+        if key.hasPrefix("Ts") { return "system" }
         if ["TPD", "TRD", "TPS", "TVS", "TVV", "TVD", "TW0"].contains(where: key.hasPrefix) {
-            return ("power", "电源")
+            return "power"
         }
         if ["TH0", "TIE", "TSC", "TMV", "TUV", "TT0", "Ta0", "TN0", "TB0", "TA0"].contains(where: key.hasPrefix) {
-            return ("system", "系统")
+            return "system"
         }
         // TCM* is a composite/threshold sensor that tracks the hottest core;
-        // grouping it under 系统 made 系统 read like a second CPU number.
-        return ("other", "其他")
+        // grouping it under "system" made System read like a second CPU number.
+        return "other"
+    }
+
+    /// The group's display name. Split from `classify` so the id — which is
+    /// persisted in settings.json as the curve's control source — never depends
+    /// on the UI language. Resolving the string off the main thread is fine.
+    nonisolated static func groupName(_ id: String) -> String {
+        switch id {
+        case "cpu":     return String(localized: "CPU")
+        case "gpu":     return String(localized: "GPU")
+        case "memory":  return String(localized: "Memory")
+        case "power":   return String(localized: "Power")
+        case "system":  return String(localized: "System")
+        case "ambient": return String(localized: "Ambient")
+        default:        return String(localized: "Other")
+        }
     }
 
     // MARK: - polling
 
-    /// Self-cancelling: moving the 采样间隔 slider while the initial SMC scan is
+    /// Self-cancelling: moving the sampling-interval slider while the SMC scan is
     /// still running used to leave the bootstrap's timer running with nothing
     /// holding a reference to it, polling forever at double rate.
     private func startPolling() {
@@ -293,7 +311,7 @@ final class AppState: ObservableObject {
 
     /// Re-assert held fans on a fixed cadence. The helper hands every fan back
     /// to macOS after 20 s of silence, and riding the poll timer for that made
-    /// the margin a function of the 采样间隔 slider — at 3 s the re-assert period
+    /// the margin a function of the sampling-interval slider — at 3 s the period
     /// was already ~6 s, and anything that delayed a tick ate into the rest.
     private func startHeartbeat() {
         heartbeatTimer?.cancel()
@@ -385,7 +403,7 @@ final class AppState: ObservableObject {
             }
         }
         // Keep the last known fans when a transient failure returns none:
-        // clearing them would flash 未检测到风扇 and stall the control loop.
+        // clearing them would flash "No fans detected" and stall the control loop.
         if !fanStatuses.isEmpty || fans.isEmpty { fans = fanStatuses }
         let unavailable = !sensorsOK
         if sensorsUnavailable != unavailable { sensorsUnavailable = unavailable }
@@ -411,8 +429,8 @@ final class AppState: ObservableObject {
         return loadGroups.map(\.value).max()
     }
 
-    /// The groups that stand for how hard this Mac is working. 环境 is the room,
-    /// and 其他 is the catch-all the menu-bar panel hides — a headline or an
+    /// The groups that stand for how hard this Mac is working. Ambient is the
+    /// room, and Other is the catch-all the menu-bar panel hides — a headline or an
     /// overheat alert naming a sensor no visible row explains is worse than none.
     private var loadGroups: [SensorGroupState] {
         groups.filter { $0.id != "ambient" && $0.id != "other" }
@@ -502,8 +520,8 @@ final class AppState: ObservableObject {
 
     /// The banner is about a *current* write that is not landing. Once nothing
     /// is forced any more there is no write to fail, and leaving the flag set
-    /// left 风扇转速写入未生效 on screen for the rest of the session after the
-    /// user had already put every fan back on 自动.
+    /// left "Fan speed write did not take effect" on screen for the rest of the
+    /// session after the user had already put every fan back on Auto.
     private func clearWriteFailureIfIdle() {
         if controlWriteFailed, !fanForcedActive.values.contains(true) { controlWriteFailed = false }
     }
@@ -512,8 +530,8 @@ final class AppState: ObservableObject {
     /// is how a UI ends up showing a target RPM nothing ever applied.
     private func applyControlResult(fan: Int, outcome: HelperClient.HoldOutcome) {
         // Only an SMC refusal earns the banner. An unreachable daemon is the
-        // helper pill's and the 未安装特权助手 banner's story, and blaming the
-        // SMC for it would be simply untrue.
+        // helper pill's and the helper-not-installed banner's story, and blaming
+        // the SMC for it would be simply untrue.
         let refused = outcome == .refused
         if controlWriteFailed != refused { controlWriteFailed = refused }
         // A failed send still recorded the target as sent, so hysteresis would
@@ -641,7 +659,7 @@ final class AppState: ObservableObject {
                 // version gets: the machine is now in the state the prompt was
                 // trying to fix. Dismissing the password dialog counts the same —
                 // that answers nothing, so offer the update again next launch.
-                // Only 稍后 keeps the bump (see `cancelInstallRequest`).
+                // Only "Later" keeps the bump (see `cancelInstallRequest`).
                 if installPhase.isProblem, let previous = prePromptHelperVersion {
                     settings.lastPromptedHelperVersion = previous
                 }
@@ -659,7 +677,7 @@ final class AppState: ObservableObject {
         installer.uninstall { [weak self] _ in self?.refreshHelperStatus() }
     }
 
-    /// "稍后" — keep the user's choice highlighted, just stop asking for now.
+    /// "Later" — keep the user's choice highlighted, just stop asking for now.
     func cancelInstallRequest() {
         pendingIntent = nil
         showInstallSheet = false
@@ -669,7 +687,7 @@ final class AppState: ObservableObject {
         prePromptHelperVersion = nil
     }
 
-    /// Any dismissal of the onboarding sheet — 稍后, Escape, or SwiftUI tearing
+    /// Any dismissal of the onboarding sheet — Later, Escape, or SwiftUI tearing
     /// it down — must drop the intent it captured, or a much later install would
     /// replay a choice the user has long forgotten. An install in flight is
     /// exempt: `beginInstall` moves the intent out itself and replays it there.
@@ -679,7 +697,7 @@ final class AppState: ObservableObject {
     }
 
     /// Terminal phases are a report on something that just happened, not state:
-    /// left alone, the Settings card still reads 助手已安装并连接 hours later,
+    /// left alone, the Settings card still reads "Helper installed and connected",
     /// next to a live detail line that may by then say something else.
     private func scheduleNoteExpiry(for phase: HelperInstaller.Phase) {
         noteExpiry?.cancel()
@@ -757,7 +775,7 @@ final class AppState: ObservableObject {
             alert.informativeText = reason.message + "\n\n" + HelperInstaller.Reason.uninstallNote
             alert.alertStyle = .informational
             alert.addButton(withTitle: reason.confirmTitle)
-            alert.addButton(withTitle: "稍后")
+            alert.addButton(withTitle: String(localized: "Later"))
             if alert.runModal() == .alertFirstButtonReturn {
                 self.beginInstall()
             } else {
@@ -768,10 +786,10 @@ final class AppState: ObservableObject {
 
     private func presentFailureAlert(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "助手安装未完成"
+        alert.messageText = String(localized: "Helper installation did not complete")
         alert.informativeText = message
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: String(localized: "OK"))
         alert.runModal()
     }
 
@@ -787,8 +805,9 @@ final class AppState: ObservableObject {
         guard Date().timeIntervalSince(lastOverheatAlert) > 120 else { return }
         lastOverheatAlert = Date()
         let content = UNMutableNotificationContent()
-        content.title = "FanGlass 过热提醒"
-        content.body = String(format: "传感器最高温度已达 %.0f°C(阈值 %.0f°C)", hottest, threshold)
+        content.title = String(localized: "FanGlass overheat alert")
+        content.body = String(format: String(localized: "The hottest sensor has reached %.0f°C (threshold %.0f°C)"),
+                              hottest, threshold)
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
@@ -836,8 +855,8 @@ final class AppState: ObservableObject {
     ///
     /// The order matters: a `hold` queued by the last control decision that
     /// arrived at the helper *after* `autoAll` would re-force the fan, and then
-    /// only the 20 s watchdog would undo it — exactly what 退出时恢复风扇自动控制
-    /// exists to prevent. Stopping the timers and draining the helper queue
+    /// only the 20 s watchdog would undo it — exactly what "Restore automatic fan
+    /// control on quit" exists to prevent. Stopping the timers and draining it
     /// makes that deterministic instead of a race.
     func prepareForTermination() {
         shuttingDown = true
@@ -883,9 +902,9 @@ final class AppState: ObservableObject {
         guard !fans.isEmpty else { return nil }
         switch selectionForAllFans {
         case .auto, .preset: return nil
-        case .customCurve:   return "当前为自定义曲线"
-        case .fixed:         return "当前为固定转速"
-        case nil:            return fans.count > 1 ? "各风扇设置不同" : nil
+        case .customCurve:   return String(localized: "Currently on a custom curve")
+        case .fixed:         return String(localized: "Currently on a fixed speed")
+        case nil:            return fans.count > 1 ? String(localized: "Fans are set differently") : nil
         }
     }
 

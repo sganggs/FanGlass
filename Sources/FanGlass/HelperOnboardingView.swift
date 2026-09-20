@@ -59,7 +59,7 @@ struct HelperOnboardingView: View {
 
             HStack(spacing: 10) {
                 Spacer(minLength: 12)
-                Button("稍后") { state.cancelInstallRequest() }
+                Button("Later") { state.cancelInstallRequest() }
                     .buttonStyle(LiquidButtonStyle())
                     .disabled(phase.isBusy)
                     // Esc must reach the same code path as the button, not just

@@ -12,7 +12,7 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
   <img src="docs/menubar.png" width="330" alt="FanGlass menu-bar panel">
 </p>
 
-<p align="center"><sub>The menu-bar panel: hottest sensor, fan RPM, per-group temperatures and quick modes. The UI is Simplified Chinese for now.</sub></p>
+<p align="center"><sub>The menu-bar panel: hottest sensor, fan RPM, per-group temperatures and quick modes. The screenshot shows the Chinese UI.</sub></p>
 
 ## Features
 
@@ -24,6 +24,7 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
 - **Overheat alerts.** A system notification when any sensor (except ambient) crosses the threshold; adjustable, and switchable off.
 - **RPM hysteresis.** 0–400 RPM, so the speed does not oscillate around a boundary value.
 - **The status never lies.** A missing or outdated helper, an SMC write the hardware rejected, a failed sensor read — each one is stated plainly in the UI instead of being papered over.
+- **Bilingual UI.** English and Simplified Chinese, following the system language by default and overridable on its own under **Settings → General → Language**; the change takes effect on the next launch.
 - **Persistence.** Settings live in `~/Library/Application Support/FanGlass/settings.json`.
 
 ## Installation
@@ -49,11 +50,11 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
    > **FanGlass needs one administrator authorization**
    > Writing fan speeds requires root privileges, so FanGlass needs one administrator authorization to install the background helper that does the writing.
    >
-   > Upgrading or uninstalling the helper asks once more; the helper stays resident in the background and can be removed at any time from Settings → Privileged Helper.
+   > Upgrading or uninstalling the helper asks once more; the helper stays resident in the background and can be removed at any time under Settings → Privileged Helper.
 
-   Click **安装助手** (Install Helper) and enter your login password. The status pill in the window turns to "助手已连接" (helper connected) and you can start driving the fans.
+   Click **Install Helper** and enter your login password. The status pill in the window turns to "Helper connected" and you can start driving the fans.
 
-Chose **稍后** (Later)? Nothing is lost. The next time you pick a fixed speed, a curve preset, or a quick mode from the menu bar, FanGlass offers to install the helper right there — no hunting through Settings. The menu-bar panel carries an install button, the fan page keeps a persistent banner while the helper is missing or outdated, and the status pill itself is clickable ("助手未安装 · 安装" / "助手版本过旧 · 更新").
+Chose **Later**? Nothing is lost. The next time you pick a fixed speed, a curve preset, or a quick mode from the menu bar, FanGlass offers to install the helper right there — no hunting through Settings. The menu-bar panel carries an install button, the fan page keeps a persistent banner while the helper is missing or outdated, and the status pill itself is clickable ("Helper not installed · Install" / "Helper outdated · Update").
 
 ### 2. Build from source
 
@@ -72,11 +73,11 @@ You can also install the helper without touching the UI: `./scripts/install.sh` 
 
 - **Menu bar.** The status item shows the hottest sensor. The panel below it lists the sensor groups and the fan speed, and the quick-mode row at the bottom **applies to every fan**. The active mode is highlighted; when fans disagree, or a fan is on a custom curve or a fixed speed, a caption line says so.
 - **Dashboard.** Sensor group cards plus a history chart, with the number of probes found on this Mac next to the heading.
-- **Fan control.** One card per fan, showing live RPM, the hardware RPM range, and a "手动控制中" (under manual control) badge.
+- **Fan control.** One card per fan, showing live RPM, the hardware RPM range, and a "Manual control" badge.
   - **Auto** hands the fan back to macOS and needs no helper.
   - **Fixed** maps the slider percentage onto the fan's own `F{i}Mn..F{i}Mx` range and applies the final value when you let go.
   - **Curve** starts from a preset and is then edited directly on the graph: drag points, double-click empty space to add, right-click to delete (2 minimum, 8 maximum). Which temperature the curve follows is chosen in Settings (CPU by default, or the hottest sensor).
-- **Settings.** Sampling interval (0.5–3 s), launch at login, whether to restore automatic control immediately on quit, the curve's temperature source, RPM hysteresis, the overheat threshold, and installing / reinstalling / uninstalling the privileged helper.
+- **Settings.** UI language (System / 简体中文 / English), sampling interval (0.5–3 s), launch at login, whether to restore automatic control immediately on quit, the curve's temperature source, RPM hysteresis, the overheat threshold, and installing / reinstalling / uninstalling the privileged helper.
 
 ## Supported Macs
 
@@ -88,7 +89,7 @@ Exactly one machine has been verified on real hardware: **Mac16,10 (M4, single f
 | M2 family | expected | expected | same key families; untested |
 | M3 family | expected | expected | this generation reports CPU as `Tf0*`/`Tf4*` and GPU as `Tf1*`/`Tf2*`; handled separately, untested |
 | M4 family | ✅ tested | ✅ tested | developed and verified on Mac16,10 |
-| M5 and later | expected | expected | grouping is by SMC key prefix; if the family changes again, unrecognised sensors land in "其他" (Other) — please send a `probe` dump |
+| M5 and later | expected | expected | grouping is by SMC key prefix; if the family changes again, unrecognised sensors land in "Other" — please send a `probe` dump |
 | Fanless Macs (MacBook Air, …) | expected | — | sensors only; the UI says so explicitly |
 | Multi-fan Macs (14/16″ MBP, Mac Studio, Mac Pro) | expected | expected | each fan configured independently, menu bar shows the fastest fan and the fan count; untested |
 | Intel Macs | ❌ | ❌ | see below |
@@ -137,7 +138,7 @@ Reading temperatures needs no privileges at all. **Writing the fan registers is 
 
 ## Uninstalling
 
-1. FanGlass → **设置 → 特权助手 → 卸载助手…** (Settings → Privileged Helper → Uninstall Helper, one more authorization), or run `./scripts/uninstall.sh`.
+1. FanGlass → **Settings → Privileged Helper → Uninstall Helper…** (one more authorization), or run `./scripts/uninstall.sh`.
 2. Move `FanGlass.app` to the Trash.
 3. To drop the settings too: `rm -rf ~/Library/Application\ Support/FanGlass`.
 
@@ -155,7 +156,7 @@ After 20 s without a heartbeat the helper returns every fan to automatic control
 No. The helper is a separate file in `/Library/PrivilegedHelperTools` and does not care where the app lives.
 
 **The status says the helper is outdated.**
-launchd keeps running whatever daemon is on disk, and an old one may silently ignore commands from a newer app. The status pill reads "助手版本过旧 · 更新" and the fan page carries a persistent banner; click either one (or Settings → 更新助手…) to reinstall. It costs one more authorization.
+launchd keeps running whatever daemon is on disk, and an old one may silently ignore commands from a newer app. The status pill reads "Helper outdated · Update" and the fan page carries a persistent banner; click either one (or Settings → Update Helper…) to reinstall. It costs one more authorization.
 
 **The fan page says this model is not supported.**
 This Mac's SMC exposes no writable RPM target or manual-mode switch — a fanless model, or one whose fans are read-only. The sensor half of the app still works normally.
@@ -164,7 +165,7 @@ This Mac's SMC exposes no writable RPM target or manual-mode switch — a fanles
 That toggle goes through the system's `SMAppService`, and an ad-hoc signed build can be refused registration. Add FanGlass by hand under System Settings → General → Login Items instead.
 
 **Can the UI be switched to English?**
-Not yet — the interface is Simplified Chinese only. Localization PRs are welcome.
+Yes. The UI follows the system language by default; to pin it, choose System, 简体中文 or English under **Settings → General → Language** and relaunch FanGlass. (That setting writes the same per-app language override System Settings → General → Language & Region → Applications does.)
 
 ## Design notes
 
@@ -192,7 +193,9 @@ sysctl -n hw.model
 
 Conventions:
 
-- UI strings are Simplified Chinese; code comments are English.
+- UI strings in the code are **English source strings, and those strings are the localization keys**; the Chinese lives in `Resources/zh-Hans.lproj/Localizable.strings`. Every new string needs an entry in BOTH `Resources/en.lproj` and `Resources/zh-Hans.lproj` (`build.sh` runs `plutil -lint` on both and fails the build on a bad one). Nothing under `Sources/` may contain a CJK character — comments included.
+- Anything that reaches the screen through a Swift `String` (enum titles, `String(format:)`, `NSAlert`, notification content) has to go through `String(localized:)` itself; SwiftUI initialisers that take a `LocalizedStringKey` (`Text`, `Button`, `Toggle`, …) localize on their own.
+- The menu-bar quick-mode row uses the `AdaptivePillRow` layout: one row of equal-width pills while the labels fit (Chinese does), wrapping onto further rows at natural widths when they do not (English does), so a long label never truncates to "…".
 - Layout: `Sources/FanGlass` (the app), `Sources/HelperTool` (the root daemon), `Sources/Shared` (SMC access and the wire protocol, compiled into both).
 - There is no Xcode project — `scripts/build.sh` calls `swiftc` directly. Run it after a change and you are done.
 - `build.sh` runs `xattr -cr` before signing: with the source tree on the Desktop or in an iCloud-synced folder the bundle picks up `com.apple.FinderInfo`, `codesign` then fails with "resource fork, Finder information, or similar detritus not allowed", and an unsigned bundle is reported to whoever downloads it as damaged.

@@ -47,7 +47,10 @@ final class HelperInstaller {
         guard !isBusy else { return }
         phase = .authorizing
         Task { [self] in
-            let result = await Self.runScript("install.sh")
+            let result = await Self.runScript(
+                "install.sh",
+                prompt: String(localized: "FanGlass needs to install a privileged helper to control fan speed.")
+            )
             if result.canceled {
                 phase = .canceled
                 completion(nil)
@@ -63,7 +66,7 @@ final class HelperInstaller {
                 phase = .installed
                 completion(version)
             } else {
-                phase = .failed("助手已安装但未能连接,请重试")
+                phase = .failed(String(localized: "The helper was installed but did not connect. Please try again."))
                 completion(nil)
             }
         }
@@ -73,7 +76,10 @@ final class HelperInstaller {
         guard !isBusy else { return }
         phase = .authorizing
         Task { [self] in
-            let result = await Self.runScript("uninstall.sh")
+            let result = await Self.runScript(
+                "uninstall.sh",
+                prompt: String(localized: "FanGlass needs authorization to uninstall the privileged helper.")
+            )
             if result.canceled {
                 phase = .canceled
                 completion(false)
@@ -100,18 +106,19 @@ final class HelperInstaller {
         let message: String
     }
 
-    private static func runScript(_ name: String) async -> ScriptResult {
+    private static func runScript(_ name: String, prompt: String) async -> ScriptResult {
         await withCheckedContinuation { (continuation: CheckedContinuation<ScriptResult, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: runScriptSync(name))
+                continuation.resume(returning: runScriptSync(name, prompt: prompt))
             }
         }
     }
 
     /// Blocking: runs on a background queue, never on the main actor.
-    private nonisolated static func runScriptSync(_ name: String) -> ScriptResult {
+    private nonisolated static func runScriptSync(_ name: String, prompt: String) -> ScriptResult {
         guard let script = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "scripts") else {
-            return ScriptResult(ok: false, canceled: false, message: "找不到 \(name)")
+            return ScriptResult(ok: false, canceled: false,
+                                message: String(format: String(localized: "Could not find %@"), name))
         }
 
         let process = Process()
@@ -129,6 +136,9 @@ final class HelperInstaller {
         // install.sh verifies the daemon by pinging it; this is the version the
         // reply has to carry. Inside the bundle it cannot read HelperProtocol.swift.
         env["FANGLASS_HELPER_VERSION"] = String(HelperProtocol.version)
+        // The authorization dialog's wording belongs to the app, which knows the
+        // UI language; the scripts only fall back to English when run by hand.
+        env["FANGLASS_PROMPT"] = prompt
         process.environment = env
 
         let errPipe = Pipe()
@@ -154,7 +164,8 @@ final class HelperInstaller {
         // line too, and substring-matching the word would mask real errors.
         let canceled = !ok && errText.contains("-128")
         let message = errText.isEmpty
-            ? "操作失败(退出码 \(process.terminationStatus))"
+            ? String(format: String(localized: "The operation failed (exit code %lld)"),
+                     Int(process.terminationStatus))
             : errText
         return ScriptResult(ok: ok, canceled: canceled, message: message)
     }
@@ -192,11 +203,11 @@ extension HelperInstaller.Phase {
     var note: String? {
         switch self {
         case .idle:          return nil
-        case .authorizing:   return "正在请求管理员授权…"
-        case .verifying:     return "正在启动助手…"
-        case .installed:     return "助手已安装并连接"
-        case .uninstalled:   return "助手已卸载"
-        case .canceled:      return "已取消授权,风扇仍由系统自动控制"
+        case .authorizing:   return String(localized: "Requesting administrator authorization…")
+        case .verifying:     return String(localized: "Starting the helper…")
+        case .installed:     return String(localized: "Helper installed and connected")
+        case .uninstalled:   return String(localized: "Helper uninstalled")
+        case .canceled:      return String(localized: "Authorization cancelled; the fans stay under automatic system control")
         case .failed(let m): return m
         }
     }
@@ -205,35 +216,39 @@ extension HelperInstaller.Phase {
 extension HelperInstaller.Reason {
     var title: String {
         switch self {
-        case .firstLaunch: return "FanGlass 需要一次管理员授权"
-        case .outdated:    return "特权助手需要更新"
-        case .manual:      return "安装特权助手"
+        case .firstLaunch: return String(localized: "FanGlass needs one administrator authorization")
+        case .outdated:    return String(localized: "The Privileged Helper needs updating")
+        case .manual:      return String(localized: "Install the Privileged Helper")
         // Neither entry point came from picking a mode: one is a warning
         // banner, the other the top-bar status pill.
         case .banner, .statusPill:
-            return "安装特权助手以控制风扇转速"
+            return String(localized: "Install the Privileged Helper to control fan speed")
         case .modePicked, .presetPicked:
-            return "要让这个模式生效,需要先安装特权助手"
+            return String(localized: "This mode needs the Privileged Helper installed before it can take effect")
         }
     }
 
     /// The caveat, in one line. Shown by both the sheet and the NSAlert: the
     /// alert is the only thing a first-launch user sees before typing an admin
     /// password, so it must not be the vaguer of the two.
-    static let uninstallNote =
-        "升级或卸载助手时会再询问一次；助手常驻后台，可随时在「设置 → 特权助手」中卸载。"
+    static var uninstallNote: String {
+        String(localized: "Upgrading or uninstalling the helper asks once more; the helper stays resident in the background and can be removed at any time under Settings → Privileged Helper.")
+    }
 
     var message: String {
         switch self {
         case .outdated:
-            return "已安装的助手版本较旧,可能无法执行这一版 FanGlass 的指令。更新只需再授权一次。"
+            return String(localized: "The installed helper is an older version and may not be able to carry out this build's commands. Updating costs one more authorization.")
         default:
-            // Deliberately not "之后无需再输入密码"：升级或卸载助手时还会问一次，
-            // and a promise the app's own code path breaks is worse than none.
-            // `uninstallNote` carries that caveat; this line stays one sentence.
-            return "写入风扇转速需要 root 权限，因此需要一次管理员授权，安装负责写入的后台助手。"
+            // Deliberately not "you will never be asked for a password again":
+            // upgrading or uninstalling the helper asks once more, and a promise
+            // the app's own code path breaks is worse than none. `uninstallNote`
+            // carries that caveat; this line stays one sentence.
+            return String(localized: "Writing fan speeds requires root privileges, so FanGlass needs one administrator authorization to install the background helper that does the writing.")
         }
     }
 
-    var confirmTitle: String { self == .outdated ? "更新助手" : "安装助手" }
+    var confirmTitle: String {
+        self == .outdated ? String(localized: "Update Helper") : String(localized: "Install Helper")
+    }
 }

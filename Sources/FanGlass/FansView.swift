@@ -15,9 +15,9 @@ struct FansView: View {
                             Image(systemName: "fan.slash")
                                 .font(.system(size: 28))
                                 .foregroundStyle(.secondary)
-                            Text("未检测到风扇")
+                            Text("No fans detected")
                                 .font(.headline)
-                            Text("这台 Mac 可能没有可控风扇(如无风扇设计),或 SMC 不可用。")
+                            Text("This Mac may have no controllable fans (a fanless design), or the SMC is unavailable.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -30,16 +30,16 @@ struct FansView: View {
                     // each one makes the next moot, so only the top-most shows.
                     if !state.fanControlSupported {
                         NoticeCard(
-                            title: "此机型暂不支持风扇控制,仅显示传感器数据",
-                            detail: "SMC 没有提供可写入的转速目标或手动模式开关。"
+                            title: "Fan control is not supported on this Mac; sensor data only",
+                            detail: "The SMC exposes no writable RPM target or manual-mode switch."
                         )
                     } else if !state.helperAvailable {
                         // Same warning the menu-bar panel shows: without the helper a
                         // mode still saves and still lights up, but no fan moves.
                         helperBanner(
-                            title: "未安装特权助手,选择的模式不会生效",
-                            detail: "风扇转速的写入需要 root 权限,只需授权一次。",
-                            action: "安装助手…",
+                            title: "Helper not installed; the mode you pick will not take effect",
+                            detail: "Writing fan speeds requires root privileges; one authorization is all it takes.",
+                            action: "Install Helper…",
                             reason: .banner
                         )
                     } else if state.helperOutdated {
@@ -48,35 +48,36 @@ struct FansView: View {
                         // the only trace is the Settings card, which the user has
                         // to go looking for — and the prompt fires only once.
                         helperBanner(
-                            title: "特权助手版本过旧，部分指令可能不生效",
-                            detail: "更新只需再授权一次。",
-                            action: "更新助手…",
+                            title: "Helper is outdated; some commands may not take effect",
+                            detail: "Updating costs one more authorization.",
+                            action: "Update Helper…",
                             reason: .outdated
                         )
                     } else if state.sensorsUnavailable {
                         // Only the curve branch releases on a blackout; a fan
-                        // in 固定转速 keeps being held at its target.
+                        // on a fixed speed is still held at its target.
                         NoticeCard(
-                            title: "传感器读取失败，曲线模式已恢复系统自动控制",
-                            detail: "SMC 暂时无法读取温度，曲线不会按 0°C 继续下发转速；固定转速的风扇仍保持设定值。"
+                            title: "Sensor read failed; curve mode is back on automatic control",
+                            detail: "The SMC cannot read temperatures right now, so curves will not go on driving fans as if it were 0°C; fans on a fixed speed keep their target."
                         )
                     } else if state.controlWriteFailed {
                         NoticeCard(
-                            title: "风扇转速写入未生效",
-                            detail: "助手已收到指令但 SMC 拒绝写入,本机型可能不允许强制转速。"
+                            title: "Fan speed write did not take effect",
+                            detail: "The helper received the command but the SMC refused the write; this Mac may not allow forcing a fan speed."
                         )
                     }
 
                     HStack {
                         GlassSectionHeader(
-                            title: "风扇",
-                            detail: state.controlTemperatureValue.map { String(format: "控制源温度 %.0f°C", $0) }
-                                ?? "控制源温度不可用"
+                            title: String(localized: "Fans"),
+                            detail: state.controlTemperatureValue.map {
+                                String(format: String(localized: "Control source %.0f°C"), $0)
+                            } ?? String(localized: "Control source temperature unavailable")
                         )
                         Spacer()
                         // An action, not a mode — no accent `active` treatment,
                         // but it must not look clickable when it would do nothing.
-                        Button("全部恢复自动") { state.restoreAutoAll() }
+                        Button("Restore all to Auto") { state.restoreAutoAll() }
                             .buttonStyle(LiquidButtonStyle())
                             .disabled(state.allFansAuto || !state.fanControlSupported)
                     }
@@ -92,7 +93,8 @@ struct FansView: View {
         }
     }
 
-    private func helperBanner(title: String, detail: String, action: String,
+    private func helperBanner(title: LocalizedStringKey, detail: LocalizedStringKey,
+                              action: LocalizedStringKey,
                               reason: HelperInstaller.Reason) -> some View {
         GlassCard(padding: 14) {
             HStack(spacing: 10) {
@@ -126,7 +128,7 @@ struct FanCardView: View {
             get: { config.mode },
             set: { mode in
                 let apply = { state.updateFanConfig(fan.index) { $0.mode = mode } }
-                // 自动 IS what an uninstalled helper leaves the fan on — only the
+                // Auto IS what an uninstalled helper leaves the fan on — only the
                 // modes that need a privileged write are worth a password for.
                 if mode == .auto { apply() } else { state.requireHelper(.modePicked, then: apply) }
             }
@@ -139,10 +141,10 @@ struct FanCardView: View {
                 // header
                 HStack(alignment: .firstTextBaseline) {
                     SpinningFanView(rpm: fan.actualRPM, size: 14)
-                    Text("风扇 \(fan.index + 1)")
+                    Text("Fan \(fan.index + 1)")
                         .font(.system(size: 15, weight: .semibold))
                     if fan.forced {
-                        Text("手动控制中")
+                        Text("Manual control")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 7)
@@ -158,7 +160,7 @@ struct FanCardView: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
-                    Text(String(format: "范围 %.0f–%.0f", fan.minRPM, fan.maxRPM))
+                    Text(String(format: String(localized: "Range %.0f–%.0f"), fan.minRPM, fan.maxRPM))
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
@@ -167,6 +169,8 @@ struct FanCardView: View {
                     options: FanControlMode.allCases.map { ($0, $0.title) },
                     selection: modeBinding
                 )
+                // 260 pt gives each of Auto / Fixed / Curve 81.3 pt; the widest
+                // English label needs 59 pt, the Chinese ones less.
                 .frame(width: 260)
                 // LiquidSegmentedPicker has no disabled styling of its own.
                 .opacity(state.fanControlSupported ? 1 : 0.45)
@@ -190,7 +194,7 @@ struct FanCardView: View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.shield")
                 .foregroundStyle(.green)
-            Text("由系统自动管理转速。")
+            Text("Fan speed is managed automatically by the system.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
@@ -207,15 +211,17 @@ struct FanCardView: View {
         let rpm = fan.minRPM + config.fixedPercent / 100 * (fan.maxRPM - fan.minRPM)
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("目标转速")
+                Text("Target speed")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(String(format: "%.0f RPM(%.0f%%)", rpm, config.fixedPercent))
+                Text(String(format: String(localized: "%.0f RPM (%.0f%%)"), rpm, config.fixedPercent))
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
             }
             Slider(value: binding, in: 0...100, step: 1) {
-                Text("转速")
+                // The slider's own label, kept distinct from the menu-bar
+                // panel's "Fan speed" heading so the two can be worded apart.
+                Text("Speed")
             } minimumValueLabel: {
                 Text(String(format: "%.0f", fan.minRPM)).font(.system(size: 9))
             } maximumValueLabel: {
@@ -231,22 +237,22 @@ struct FanCardView: View {
     private var curveBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("预设")
+                Text("Presets")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                ForEach(FanConfig.presets, id: \.name) { preset in
-                    Button(preset.name) {
+                ForEach(FanConfig.presets) { preset in
+                    Button(preset.title) {
                         state.requireHelper(.presetPicked) {
                             state.applyPreset(fan.index, curve: preset.curve)
                         }
                     }
-                    .buttonStyle(LiquidButtonStyle(active: config.selection == .preset(preset.name)))
+                    .buttonStyle(LiquidButtonStyle(active: config.selection == .preset(preset.id)))
                     .disabled(!state.fanControlSupported)
                 }
-                // Outlined and neutral on purpose: 自定义 describes the state of
-                // an unlit row, it is not a fifth preset to click.
+                // Outlined and neutral on purpose: "Custom" describes the state
+                // of an unlit row, it is not a fifth preset to click.
                 if config.selection == .customCurve {
-                    Text("自定义")
+                    Text("Custom")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
@@ -255,7 +261,7 @@ struct FanCardView: View {
                 }
                 Spacer()
                 if let target = state.targetRPMs[fan.index], target > 0 {
-                    Text(String(format: "目标 %.0f RPM", target))
+                    Text(String(format: String(localized: "Target %.0f RPM"), target))
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -272,7 +278,7 @@ struct FanCardView: View {
             }
             .frame(height: 230)
 
-            Text("拖拽控制点调整 · 双击空白添加 · 右键删除")
+            Text("Drag a point to adjust · double-click empty space to add · right-click to delete")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -288,13 +294,13 @@ struct FanCardView: View {
         let history = state.fanHistories[fan.index] ?? []
         return Chart(history, id: \.time) { sample in
             AreaMark(
-                x: .value("时间", sample.time),
+                x: .value(String(localized: "Time"), sample.time),
                 y: .value("RPM", sample.value)
             )
             .foregroundStyle(GlassPalette.accent.opacity(0.15).gradient)
             .interpolationMethod(.catmullRom)
             LineMark(
-                x: .value("时间", sample.time),
+                x: .value(String(localized: "Time"), sample.time),
                 y: .value("RPM", sample.value)
             )
             .foregroundStyle(GlassPalette.accent)
@@ -321,8 +327,8 @@ struct FanCardView: View {
 /// in gets said out loud here — a fan controller must never look like it is
 /// working when it is not.
 private struct NoticeCard: View {
-    let title: String
-    let detail: String
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
 
     var body: some View {
         GlassCard(padding: 14) {

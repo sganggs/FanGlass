@@ -2,8 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- The source strings are English and double as the localization keys;
+         Simplified Chinese lives in Resources/zh-Hans.lproj/Localizable.strings.
+         CFBundleLocalizations is what lets macOS offer FanGlass under System
+         Settings -> General -> Language & Region -> Applications, and what the
+         in-app Settings -> General -> Language picker writes an override for. -->
     <key>CFBundleDevelopmentRegion</key>
-    <string>zh_CN</string>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>FanGlass</string>
     <key>CFBundleIdentifier</key>

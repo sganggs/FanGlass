@@ -4,11 +4,13 @@ import SwiftUI
 
 enum AppTab: String, CaseIterable {
     case dashboard, fans, settings
+    /// Flows through a plain `String` into LiquidSegmentedPicker, so it is
+    /// localized here rather than by SwiftUI.
     var title: String {
         switch self {
-        case .dashboard: return "仪表盘"
-        case .fans: return "风扇控制"
-        case .settings: return "设置"
+        case .dashboard: return String(localized: "Dashboard")
+        case .fans: return String(localized: "Fan control")
+        case .settings: return String(localized: "Settings")
         }
     }
     var icon: String {
@@ -107,7 +109,10 @@ struct RootView: View {
                     options: AppTab.allCases.map { ($0, $0.title) },
                     selection: $tab
                 )
-                .frame(width: 300)
+                // 330, not 300: at 300 the three English tabs get 94.7 pt each
+                // and "Fan control" needs 90 — under 5 pt of slack before it
+                // truncates. 330 gives each 104.7.
+                .frame(width: 330)
 
                 Spacer()
 
@@ -181,9 +186,9 @@ struct HelperStatusPill: View {
     /// button, which is exactly the user who does not need telling.
     private var label: String {
         switch status {
-        case .connected: return "助手已连接"
-        case .outdated:  return "助手版本过旧 · 更新"
-        case .missing:   return "助手未安装 · 安装"
+        case .connected: return String(localized: "Helper connected")
+        case .outdated:  return String(localized: "Helper outdated · Update")
+        case .missing:   return String(localized: "Helper not installed · Install")
         }
     }
 
@@ -199,7 +204,9 @@ struct HelperStatusPill: View {
                 pill
             }
             .buttonStyle(.plain)
-            .help(status == .outdated ? "点按更新特权助手" : "点按安装特权助手")
+            .help(status == .outdated
+                  ? String(localized: "Click to update the Privileged Helper")
+                  : String(localized: "Click to install the Privileged Helper"))
             // Fill only: a pushed NSCursor has no exit path here — the Button
             // itself is replaced the moment the install succeeds, so onHover
             // never reports the cursor leaving and the pointing hand leaks.
