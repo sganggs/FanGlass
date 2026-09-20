@@ -47,11 +47,13 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
 4. On first launch FanGlass asks for administrator authorization once:
 
    > **FanGlass needs one administrator authorization**
-   > Writing fan speeds requires root privileges. FanGlass installs a small background helper to do the writing — you authorize once and are never asked again. Reading temperatures requires no privileges at all.
+   > Writing fan speeds requires root privileges. FanGlass installs a small background helper to do the writing — you authorize once, and normal use never asks for a password again (only upgrading or uninstalling the helper asks once more). Reading temperatures requires no privileges at all.
+   >
+   > The helper is installed as a background service (starts at boot, keeps running after you quit FanGlass) and can be removed at any time from Settings → Privileged Helper.
 
    Click **安装助手** (Install Helper) and enter your login password. The status pill in the window turns to "助手已连接" (helper connected) and you can start driving the fans.
 
-Chose **稍后** (Later)? Nothing is lost. The next time you pick a fixed speed, a curve preset, or a quick mode from the menu bar, FanGlass offers to install the helper right there — no hunting through Settings. The menu-bar panel and the fan page each carry an install button as well.
+Chose **稍后** (Later)? Nothing is lost. The next time you pick a fixed speed, a curve preset, or a quick mode from the menu bar, FanGlass offers to install the helper right there — no hunting through Settings. The menu-bar panel carries an install button, the fan page keeps a persistent banner while the helper is missing or outdated, and the status pill itself is clickable ("助手未安装 · 安装" / "助手版本过旧 · 更新").
 
 ### 2. Build from source
 
@@ -107,7 +109,8 @@ It only reads, never writes, and needs no privileges.
 ```
 FanGlass.app (SwiftUI menu-bar agent, ordinary user privileges)
    │  SMC reads: temperatures / RPM / fan hardware range (IOKit AppleSMC, no privileges)
-   │  JSON-lines over /var/run/fanglass.sock (5 s heartbeat)
+   │  JSON-lines over /var/run/fanglass.sock (5 s heartbeat command,
+   │  plus a status query every ~10 s; queries do not feed the watchdog)
    ▼
 fanglass-helper (launchd root daemon, protocol v6)
    │  SMC writes: F{i}Md manual mode + F{i}Tg target RPM (legacy FS! bitmask where needed)
@@ -122,7 +125,8 @@ Reading temperatures needs no privileges at all. **Writing the fan registers is 
 
 - **Who may command it.** Every connection's peer uid is checked with `LOCAL_PEERCRED`; only root and the user currently at the console are accepted, everything else is refused (with rate-limited logging, so the root-owned log cannot be spammed).
 - **What it may do.** Fan-related SMC writes, and nothing else. Targets are always clamped to the range the fan itself reports (`F{i}Mn..F{i}Mx`), so it cannot overspeed a fan.
-- **App silent for 20 s** → the watchdog hands every fan back to macOS. (The clock jump across sleep does not count as silence; `kill -9` has been verified to recover.)
+- **App silent for 20 s** → the watchdog hands every fan back to macOS. (The clock jump across sleep does not count as silence; `kill -9` has been verified to recover.) Only real control commands (`hold` / `auto`) refresh that deadline — `ping` and `status` are pure queries, so a forced speed nobody is tracking any more cannot be kept alive by the app's routine status polling.
+- **Adopting forgotten holds at startup** → on launch the app asks the daemon which fans it is currently holding. Fans this build will keep driving are adopted, so they can be handed back normally; fans it will never touch (no fan control on this model, or an index not in the current fan list) are returned to macOS immediately. A speed left behind by a force-quit process is never left unowned.
 - **SIGTERM / SIGINT** (uninstall, reboot, `launchctl bootout`) → restore automatic control, then exit.
 - **~10 s of failing writes** → reopen the IOKit connection, and if it still fails, hand the fans back rather than keep hammering hardware that is not listening.
 - **Sensor reads failing** → a failed read is never treated as 0 °C (which would drive a curve to minimum RPM); the fan goes back to macOS and the UI says why.
@@ -142,7 +146,7 @@ Uninstalling removes `/Library/LaunchDaemons/com.fanglass.helper.plist`, `/Libra
 ## FAQ
 
 **Why is a password required at all?**
-macOS only lets root processes write the SMC's fan registers. Every fan-control app on macOS has to cross that line; there is no zero-prompt path. FanGlass asks exactly once, at install time.
+macOS only lets root processes write the SMC's fan registers. Every fan-control app on macOS has to cross that line; there is no zero-prompt path. FanGlass asks once at install time and never during normal use — only upgrading the helper (when the protocol version changes) or uninstalling it asks again.
 
 **What if I just delete the app and never uninstall the helper?**
 After 20 s without a heartbeat the helper returns every fan to automatic control, so nothing stays stuck at a forced speed. The daemon itself is still installed, though — follow the uninstall steps above to remove it properly.
@@ -151,7 +155,7 @@ After 20 s without a heartbeat the helper returns every fan to automatic control
 No. The helper is a separate file in `/Library/PrivilegedHelperTools` and does not care where the app lives.
 
 **The status says the helper is outdated.**
-launchd keeps running whatever daemon is on disk, and an old one may silently ignore commands from a newer app. Click the status pill (or Settings → 更新助手…) to reinstall; it costs one more authorization.
+launchd keeps running whatever daemon is on disk, and an old one may silently ignore commands from a newer app. The status pill reads "助手版本过旧 · 更新" and the fan page carries a persistent banner; click either one (or Settings → 更新助手…) to reinstall. It costs one more authorization.
 
 **The fan page says this model is not supported.**
 This Mac's SMC exposes no writable RPM target or manual-mode switch — a fanless model, or one whose fans are read-only. The sensor half of the app still works normally.
@@ -192,7 +196,8 @@ Conventions:
 - Layout: `Sources/FanGlass` (the app), `Sources/HelperTool` (the root daemon), `Sources/Shared` (SMC access and the wire protocol, compiled into both).
 - There is no Xcode project — `scripts/build.sh` calls `swiftc` directly. Run it after a change and you are done.
 - `build.sh` runs `xattr -cr` before signing: with the source tree on the Desktop or in an iCloud-synced folder the bundle picks up `com.apple.FinderInfo`, `codesign` then fails with "resource fork, Finder information, or similar detritus not allowed", and an unsigned bundle is reported to whoever downloads it as damaged.
-- If you change the helper's wire protocol, bump `version` in `Sources/Shared/HelperProtocol.swift` — otherwise the old daemon already installed on a user's machine will silently ignore the new commands.
+- If you change the helper's wire protocol — or its behaviour, even when the message format is untouched — bump `version` in `Sources/Shared/HelperProtocol.swift`. launchd runs whatever daemon is on disk, and the "helper outdated" prompt is the only thing that ever replaces it; without the bump you have only changed the code in the repo.
+- The root-side of `scripts/install.sh` is assembled inside `$(cat <<EOF … EOF)`, and the bash 3.2 that macOS ships keeps looking for the closing paren inside that heredoc — a single apostrophe in an English comment there breaks the whole file with a misleading `unexpected EOF` somewhere else. That script pings the helper with `nc` rather than `python3` to confirm the install: on a Mac without the Command Line Tools, `/usr/bin/python3` is a stub that pops an installer dialog instead of running.
 
 ## License
 
