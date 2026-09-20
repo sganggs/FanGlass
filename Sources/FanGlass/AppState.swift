@@ -34,6 +34,9 @@ final class AppState: ObservableObject {
     @Published private(set) var scanning = true
     @Published private(set) var helperAvailable = false
     @Published private(set) var targetRPMs: [Int: Double] = [:]
+    /// Tab the main window should open on. RootView owns `tab` as private
+    /// @State, so this is the only way in from the menu-bar panel.
+    @Published var pendingTab: AppTab?
     @Published var settings: AppSettings {
         didSet {
             SettingsStore.save(settings)
@@ -46,6 +49,7 @@ final class AppState: ObservableObject {
     nonisolated(unsafe) private var smc: SMC?
     nonisolated(unsafe) private var scanSnapshot: [(id: String, keys: [String])] = []
     nonisolated(unsafe) private var fanCountSnapshot = 0
+    nonisolated(unsafe) private var pollTick = 0
 
     // Control bookkeeping (MainActor only).
     private var lastSentRPM: [Int: Double] = [:]
@@ -154,6 +158,19 @@ final class AppState: ObservableObject {
 
         Task { @MainActor in
             self.applyPollResults(sensorValues: newValues, fanStatuses: fanStatuses)
+        }
+
+        // Re-ping the helper every ~10 ticks: it can be installed, uninstalled or
+        // watchdog-stopped while the app runs, and a stale flag makes the status
+        // pill and the mode highlight assert things the daemon is not doing.
+        // Runs after the UI hop so a dead socket's timeout never delays sensors,
+        // and only assigns on change so it does not invalidate views every tick.
+        pollTick &+= 1
+        if pollTick % 10 == 0 {
+            let ok = HelperClient.shared.isAvailable
+            Task { @MainActor in
+                if self.helperAvailable != ok { self.helperAvailable = ok }
+            }
         }
     }
 
@@ -311,6 +328,34 @@ final class AppState: ObservableObject {
 
     var primaryFanRPM: Double {
         fans.first?.actualRPM ?? 0
+    }
+
+    func selection(forFan index: Int) -> FanSelection {
+        settings.fanConfig(for: index).selection
+    }
+
+    /// The selection shared by EVERY fan, or nil when they disagree. Menu-bar
+    /// quick modes apply to all fans at once, so nil means "highlight nothing".
+    var selectionForAllFans: FanSelection? {
+        guard let first = fans.first else { return nil }
+        let s = selection(forFan: first.index)
+        return fans.allSatisfy { selection(forFan: $0.index) == s } ? s : nil
+    }
+
+    /// One line shown when no quick-mode pill lights up, so the row is never
+    /// unexplained. nil means a pill is lit and needs no caption.
+    var quickModeHint: String? {
+        guard !fans.isEmpty else { return nil }
+        switch selectionForAllFans {
+        case .auto, .preset: return nil
+        case .customCurve:   return "当前为自定义曲线"
+        case .fixed:         return "当前为固定转速"
+        case nil:            return fans.count > 1 ? "各风扇设置不同" : nil
+        }
+    }
+
+    var allFansAuto: Bool {
+        !fans.isEmpty && fans.allSatisfy { settings.fanConfig(for: $0.index).mode == .auto }
     }
 
     func group(id: String) -> SensorGroupState? {

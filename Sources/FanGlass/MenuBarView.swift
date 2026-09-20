@@ -63,16 +63,45 @@ struct MenuBarView: View {
                 Text("快捷模式(应用于所有风扇)")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+
+                // Without the helper a click still saves the setting but changes
+                // nothing physically; say so, or the highlight below would be a lie.
+                if !state.helperAvailable {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.orange)
+                        Text("未安装特权助手,选择的模式不会生效")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 4)
+                        Button("去安装") { openMainWindow(tab: .settings) }
+                            .buttonStyle(LiquidButtonStyle(compact: true))
+                            .fixedSize()
+                    }
+                }
+
                 // Equal-width compact pills: a 300-pt panel cannot fit five
                 // default LiquidButtons, and HStack then crushes the leading
                 // ones ("自动" / "静音") into "…".
                 HStack(spacing: 5) {
-                    compactModeButton("自动") { state.restoreAutoAll() }
+                    compactModeButton("自动", active: selection == .auto) {
+                        state.restoreAutoAll()
+                    }
                     ForEach(FanConfig.presets, id: \.name) { preset in
-                        compactModeButton(preset.name) {
+                        compactModeButton(preset.name, active: selection == .preset(preset.name)) {
                             for fan in state.fans { state.applyPreset(fan.index, curve: preset.curve) }
                         }
                     }
+                }
+                .opacity(state.helperAvailable ? 1 : 0.55)
+
+                // Covers 自定义曲线 / 固定转速 / mixed fans, so an all-dark row is
+                // never left unexplained.
+                if let hint = state.quickModeHint {
+                    Text(hint)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
             }
 
@@ -94,14 +123,19 @@ struct MenuBarView: View {
         }
     }
 
-    private func compactModeButton(_ title: String, action: @escaping () -> Void) -> some View {
+    /// The mode every fan shares, or nil when they differ (nothing lights up).
+    private var selection: FanSelection? { state.selectionForAllFans }
+
+    private func compactModeButton(_ title: String, active: Bool,
+                                   action: @escaping () -> Void) -> some View {
         Button(title, action: action)
-            .buttonStyle(LiquidButtonStyle(compact: true))
+            .buttonStyle(LiquidButtonStyle(compact: true, active: active))
             .frame(maxWidth: .infinity)
             .layoutPriority(1)
     }
 
-    private func openMainWindow() {
+    private func openMainWindow(tab: AppTab? = nil) {
+        if let tab { state.pendingTab = tab }
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "main")
         DispatchQueue.main.async { AppDelegate.presentMainWindow() }

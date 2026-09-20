@@ -168,31 +168,40 @@ struct LiquidButtonStyle: ButtonStyle {
     /// Tighter padding so a row of 2-character Chinese labels still fits
     /// inside the menu-bar popover without truncating to "…".
     var compact: Bool = false
+    /// Marks this button as the option currently in effect. The signal lives in
+    /// the hairline and the label weight, not in a heavy fill — "glass at the
+    /// edges" — so it stays clearly distinct from `prominent`.
+    var active: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        LiquidButtonBody(prominent: prominent, compact: compact, configuration: configuration)
+        LiquidButtonBody(prominent: prominent, compact: compact, active: active,
+                         configuration: configuration)
     }
 
     private struct LiquidButtonBody: View {
         let prominent: Bool
         let compact: Bool
+        let active: Bool
         let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
         @State private var hovering = false
+
+        /// A button that becomes disabled under the cursor gets no onHover(false),
+        /// so `hovering` would stay stuck true. Gate every hover visual on this.
+        private var isHovering: Bool { isEnabled && hovering }
 
         var body: some View {
             configuration.label
-                .font(.system(size: compact ? 12 : 13, weight: .medium))
+                .font(.system(size: compact ? 12 : 13, weight: active ? .semibold : .medium))
                 .lineLimit(1)
                 .padding(.horizontal, compact ? 8 : 14)
                 .padding(.vertical, compact ? 5 : 7)
                 .frame(maxWidth: compact ? .infinity : nil)
-                .foregroundStyle(prominent ? Color.white : Color.primary)
+                .foregroundStyle(prominent ? Color.white : (active ? GlassPalette.accent : Color.primary))
                 .background {
                     ZStack(alignment: .top) {
                         Capsule(style: .continuous)
-                            .fill(prominent
-                                  ? AnyShapeStyle(GlassPalette.accent.gradient)
-                                  : AnyShapeStyle(Color.white.opacity(hovering ? 0.75 : 0.6)))
+                            .fill(baseFill)
                         Capsule(style: .continuous)
                             .fill(
                                 LinearGradient(
@@ -204,10 +213,12 @@ struct LiquidButtonStyle: ButtonStyle {
                         Capsule(style: .continuous)
                             .strokeBorder(
                                 LinearGradient(
-                                    colors: [Color.white.opacity(0.85), Color.white.opacity(0.2)],
+                                    colors: active
+                                        ? [GlassPalette.accent.opacity(0.9), GlassPalette.accent.opacity(0.35)]
+                                        : [Color.white.opacity(0.85), Color.white.opacity(0.2)],
                                     startPoint: .top, endPoint: .bottom
                                 ),
-                                lineWidth: 0.8
+                                lineWidth: active ? 1.2 : 0.8
                             )
                         Rectangle()
                             .fill(
@@ -219,14 +230,33 @@ struct LiquidButtonStyle: ButtonStyle {
                             .frame(height: 1)
                             .padding(.horizontal, compact ? 6 : 10)
                     }
-                    .shadow(color: prominent ? GlassPalette.accent.opacity(0.35) : Color.black.opacity(0.07),
-                            radius: hovering ? 7 : 4, x: 0, y: 2)
+                    .shadow(color: shadowColor, radius: isHovering ? 7 : 4, x: 0, y: 2)
                 }
-                .scaleEffect(configuration.isPressed ? 0.94 : (hovering ? 1.04 : 1))
+                // Disabled buttons must stop reading as clickable: dim them and
+                // freeze the hover lift / press bounce.
+                .opacity(isEnabled ? 1 : 0.45)
+                .scaleEffect(isEnabled ? (configuration.isPressed ? 0.94 : (hovering ? 1.04 : 1)) : 1)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isEnabled)
                 .brightness(configuration.isPressed ? -0.03 : 0)
                 .animation(.spring(response: 0.28, dampingFraction: 0.55), value: configuration.isPressed)
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
+                .animation(.easeOut(duration: 0.2), value: active)
                 .onHover { hovering = $0 }
+                // Not colour-only: weight and border change too, and VoiceOver
+                // gets the selection explicitly.
+                .accessibilityAddTraits(active ? [.isSelected] : [])
+        }
+
+        private var baseFill: AnyShapeStyle {
+            if prominent { return AnyShapeStyle(GlassPalette.accent.gradient) }
+            if active { return AnyShapeStyle(GlassPalette.accent.opacity(isHovering ? 0.20 : 0.14)) }
+            return AnyShapeStyle(Color.white.opacity(isHovering ? 0.75 : 0.6))
+        }
+
+        private var shadowColor: Color {
+            if prominent { return GlassPalette.accent.opacity(0.35) }
+            if active { return GlassPalette.accent.opacity(0.28) }
+            return Color.black.opacity(0.07)
         }
     }
 }

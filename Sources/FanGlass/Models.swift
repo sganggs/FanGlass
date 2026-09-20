@@ -110,6 +110,49 @@ struct FanConfig: Codable, Equatable {
     ]
 }
 
+// MARK: - Selection (what the UI highlights)
+
+/// The option a fan is currently on. Derived from the saved config, never from
+/// the last click, so the highlight survives relaunch and follows hand edits.
+enum FanSelection: Equatable {
+    case auto
+    case preset(String)
+    case customCurve
+    case fixed
+}
+
+extension FanConfig {
+    /// Curve equality that ignores point identity. `CurvePoint` stores a `var id
+    /// = UUID()` and `applyPreset` re-mints every point, so the synthesized
+    /// `[CurvePoint] ==` is always false and can never match a preset.
+    /// Pairwise is correct: presets are declared temp-ascending and the curve
+    /// editor re-sorts after every mutation. The tolerance absorbs JSON float
+    /// round-trips; a drag moves a point far more than 0.01.
+    static func curveMatches(_ a: [CurvePoint], _ b: [CurvePoint]) -> Bool {
+        guard a.count == b.count else { return false }
+        for (p, q) in zip(a, b)
+        where abs(p.temp - q.temp) > 0.01 || abs(p.percent - q.percent) > 0.01 {
+            return false
+        }
+        return true
+    }
+
+    /// Name of the preset this curve equals, or nil once the user edited it.
+    var matchingPresetName: String? {
+        FanConfig.presets.first { FanConfig.curveMatches($0.curve, curve) }?.name
+    }
+
+    /// A brand-new config is .auto, so the fact that defaultCurve IS the 均衡
+    /// preset only shows up once the fan is actually switched to curve mode.
+    var selection: FanSelection {
+        switch mode {
+        case .auto:  return .auto
+        case .fixed: return .fixed
+        case .curve: return matchingPresetName.map(FanSelection.preset) ?? .customCurve
+        }
+    }
+}
+
 struct AppSettings: Codable {
     var pollInterval: Double = 1.0
     var hysteresisRPM: Double = 120

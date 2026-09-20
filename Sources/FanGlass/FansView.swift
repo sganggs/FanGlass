@@ -32,8 +32,11 @@ struct FansView: View {
                             detail: String(format: "控制源温度 %.0f°C", state.controlTemperature)
                         )
                         Spacer()
+                        // An action, not a mode — no accent `active` treatment,
+                        // but it must not look clickable when it would do nothing.
                         Button("全部恢复自动") { state.restoreAutoAll() }
                             .buttonStyle(LiquidButtonStyle())
+                            .disabled(state.allFansAuto)
                     }
 
                     ForEach(state.fans, id: \.index) { fan in
@@ -157,7 +160,17 @@ struct FanCardView: View {
                     .foregroundStyle(.secondary)
                 ForEach(FanConfig.presets, id: \.name) { preset in
                     Button(preset.name) { state.applyPreset(fan.index, curve: preset.curve) }
-                        .buttonStyle(LiquidButtonStyle())
+                        .buttonStyle(LiquidButtonStyle(active: config.selection == .preset(preset.name)))
+                }
+                // Outlined and neutral on purpose: 自定义 describes the state of
+                // an unlit row, it is not a fifth preset to click.
+                if config.selection == .customCurve {
+                    Text("自定义")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
+                        .background(Capsule().strokeBorder(Color.secondary.opacity(0.35), lineWidth: 0.8))
                 }
                 Spacer()
                 if let target = state.targetRPMs[fan.index], target > 0 {

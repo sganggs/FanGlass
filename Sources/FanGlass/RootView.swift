@@ -59,6 +59,16 @@ struct RootView: View {
         .background(WindowAccessor().frame(width: 0, height: 0))
         .animation(.easeOut(duration: 0.22), value: tab)
         .onChange(of: tab) { _, _ in contentScrolled = false }
+        // Deep link from the menu-bar panel. onAppear covers the window being
+        // opened by that click; onChange covers it already being open.
+        .onAppear { consumePendingTab() }
+        .onChange(of: state.pendingTab) { _, _ in consumePendingTab() }
+    }
+
+    private func consumePendingTab() {
+        guard let pending = state.pendingTab else { return }
+        tab = pending
+        state.pendingTab = nil
     }
 
     // MARK: - unified glass top bar (traffic-light area included)
