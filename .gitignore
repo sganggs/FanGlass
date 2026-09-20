@@ -1,0 +1,10 @@
+# build output
+build/
+# macOS
+.DS_Store
+# editor / tooling
+.claude/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
