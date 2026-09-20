@@ -26,23 +26,41 @@ struct FansView: View {
                         .padding(.vertical, 40)
                     }
                 } else {
-                    // Same warning the menu-bar panel shows: without the helper a
-                    // mode still saves and still lights up, but no fan moves.
-                    if !state.helperAvailable {
+                    // Hardware first, then permissions, then runtime failures —
+                    // each one makes the next moot, so only the top-most shows.
+                    if !state.fanControlSupported {
+                        NoticeCard(
+                            title: "此机型暂不支持风扇控制,仅显示传感器数据",
+                            detail: "SMC 没有提供可写入的转速目标或手动模式开关。"
+                        )
+                    } else if !state.helperAvailable {
+                        // Same warning the menu-bar panel shows: without the helper a
+                        // mode still saves and still lights up, but no fan moves.
                         helperBanner
+                    } else if state.sensorsUnavailable {
+                        NoticeCard(
+                            title: "传感器读取失败,已恢复系统自动控制",
+                            detail: "SMC 暂时无法读取温度,曲线模式不会按 0°C 继续下发转速。"
+                        )
+                    } else if state.controlWriteFailed {
+                        NoticeCard(
+                            title: "风扇转速写入未生效",
+                            detail: "助手已收到指令但 SMC 拒绝写入,本机型可能不允许强制转速。"
+                        )
                     }
 
                     HStack {
                         GlassSectionHeader(
                             title: "风扇",
-                            detail: String(format: "控制源温度 %.0f°C", state.controlTemperature)
+                            detail: state.controlTemperatureValue.map { String(format: "控制源温度 %.0f°C", $0) }
+                                ?? "控制源温度不可用"
                         )
                         Spacer()
                         // An action, not a mode — no accent `active` treatment,
                         // but it must not look clickable when it would do nothing.
                         Button("全部恢复自动") { state.restoreAutoAll() }
                             .buttonStyle(LiquidButtonStyle())
-                            .disabled(state.allFansAuto)
+                            .disabled(state.allFansAuto || !state.fanControlSupported)
                     }
 
                     ForEach(state.fans, id: \.index) { fan in
@@ -131,6 +149,9 @@ struct FanCardView: View {
                     selection: modeBinding
                 )
                 .frame(width: 260)
+                // LiquidSegmentedPicker has no disabled styling of its own.
+                .opacity(state.fanControlSupported ? 1 : 0.45)
+                .disabled(!state.fanControlSupported)
 
                 switch config.mode {
                 case .auto:
@@ -197,6 +218,7 @@ struct FanCardView: View {
                         }
                     }
                     .buttonStyle(LiquidButtonStyle(active: config.selection == .preset(preset.name)))
+                    .disabled(!state.fanControlSupported)
                 }
                 // Outlined and neutral on purpose: 自定义 describes the state of
                 // an unlit row, it is not a fifth preset to click.
@@ -267,5 +289,31 @@ struct FanCardView: View {
             }
         }
         .frame(height: 90)
+    }
+}
+
+/// A one-line warning card in the fan list. Every degraded state the app can be
+/// in gets said out loud here — a fan controller must never look like it is
+/// working when it is not.
+private struct NoticeCard: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        GlassCard(padding: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 }

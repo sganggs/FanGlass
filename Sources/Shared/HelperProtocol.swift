@@ -7,7 +7,10 @@ public enum HelperProtocol {
     /// launchd keeps running whatever daemon is on disk, so an old helper would
     /// otherwise answer `ping` happily and silently ignore newer commands; the
     /// app compares this against the version `ping` reports and offers to update.
-    public static let version = 3
+    /// v4: peer-uid authorization on the socket, runtime-typed SMC writes, and
+    /// restore-to-auto when writes keep failing. An older daemon still answers
+    /// every command, so the app offers an update rather than refusing to talk.
+    public static let version = 4
 
     public static let socketPath = "/var/run/fanglass.sock"
 }

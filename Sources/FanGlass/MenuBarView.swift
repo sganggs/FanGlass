@@ -23,16 +23,24 @@ struct MenuBarView: View {
                     }
                 }
                 Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("风扇转速")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(String(format: "%.0f", state.primaryFanRPM))
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                        Text("RPM")
-                            .font(.system(size: 12, weight: .medium))
+                if !state.fans.isEmpty {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        // With two or more fans this is the fastest one, not fan 0.
+                        Text(state.fans.count > 1 ? "最高转速" : "风扇转速")
+                            .font(.system(size: 10))
                             .foregroundStyle(.secondary)
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            Text(String(format: "%.0f", state.primaryFanRPM))
+                                .font(.system(size: 26, weight: .bold, design: .rounded))
+                            Text("RPM")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        if state.fans.count > 1 {
+                            Text("共 \(state.fans.count) 个风扇")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
             }
@@ -58,54 +66,17 @@ struct MenuBarView: View {
 
             Divider().opacity(0.4)
 
-            // quick actions
-            VStack(alignment: .leading, spacing: 8) {
-                Text("快捷模式(应用于所有风扇)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-
-                // Without the helper a click still saves the setting but changes
-                // nothing physically; say so, or the highlight below would be a lie.
-                if !state.helperAvailable {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.orange)
-                        Text("未安装特权助手,选择的模式不会生效")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 4)
-                        // Straight to the password dialog — sending the user to
-                        // the Settings tab to find the card is three clicks more.
-                        Button("安装") { state.requestHelperInstall(reason: .banner) }
-                            .buttonStyle(LiquidButtonStyle(compact: true))
-                            .fixedSize()
-                    }
-                }
-
-                // Equal-width compact pills: a 300-pt panel cannot fit five
-                // default LiquidButtons, and HStack then crushes the leading
-                // ones ("自动" / "静音") into "…".
-                HStack(spacing: 5) {
-                    compactModeButton("自动", active: selection == .auto) {
-                        state.restoreAutoAll()
-                    }
-                    ForEach(FanConfig.presets, id: \.name) { preset in
-                        compactModeButton(preset.name, active: selection == .preset(preset.name)) {
-                            state.requireHelper(.presetPicked) {
-                                for fan in state.fans { state.applyPreset(fan.index, curve: preset.curve) }
-                            }
-                        }
-                    }
-                }
-                .opacity(state.helperAvailable ? 1 : 0.55)
-
-                // Covers 自定义曲线 / 固定转速 / mixed fans, so an all-dark row is
-                // never left unexplained.
-                if let hint = state.quickModeHint {
-                    Text(hint)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+            // quick actions — only where a fan can actually be driven.
+            if state.fanControlSupported {
+                quickModes
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "fan.slash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text(state.fans.isEmpty ? "本机无可控风扇" : "此机型暂不支持风扇控制")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -124,6 +95,67 @@ struct MenuBarView: View {
         .onAppear { state.refreshHelperStatus() }
         .onReceive(NotificationCenter.default.publisher(for: .fanglassOpenMainWindow)) { _ in
             openMainWindow()
+        }
+    }
+
+    private var quickModes: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("快捷模式(应用于所有风扇)")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+
+            // Without the helper a click still saves the setting but changes
+            // nothing physically; say so, or the highlight below would be a lie.
+            if !state.helperAvailable {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                    Text("未安装特权助手,选择的模式不会生效")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    // Straight to the password dialog — sending the user to
+                    // the Settings tab to find the card is three clicks more.
+                    Button("安装") { state.requestHelperInstall(reason: .banner) }
+                        .buttonStyle(LiquidButtonStyle(compact: true))
+                        .fixedSize()
+                }
+            } else if state.sensorsUnavailable {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                    Text("传感器读取失败,已恢复自动控制")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // Equal-width compact pills: a 300-pt panel cannot fit five
+            // default LiquidButtons, and HStack then crushes the leading
+            // ones ("自动" / "静音") into "…".
+            HStack(spacing: 5) {
+                compactModeButton("自动", active: selection == .auto) {
+                    state.restoreAutoAll()
+                }
+                ForEach(FanConfig.presets, id: \.name) { preset in
+                    compactModeButton(preset.name, active: selection == .preset(preset.name)) {
+                        state.requireHelper(.presetPicked) {
+                            for fan in state.fans { state.applyPreset(fan.index, curve: preset.curve) }
+                        }
+                    }
+                }
+            }
+            .opacity(state.helperAvailable ? 1 : 0.55)
+
+            // Covers 自定义曲线 / 固定转速 / mixed fans, so an all-dark row is
+            // never left unexplained.
+            if let hint = state.quickModeHint {
+                Text(hint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

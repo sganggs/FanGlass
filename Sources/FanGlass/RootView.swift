@@ -128,7 +128,7 @@ struct RootView: View {
             // (NSVisualEffectView .titlebar and SwiftUI materials both read
             // ~opaque white in light mode; glassEffect is the system look.)
             Color.clear
-                .glassEffect(.regular, in: .rect)
+                .modifier(GlassBarMaterial())
                 .overlay {
                     LinearGradient(
                         colors: [Color.white.opacity(0.10), Color.white.opacity(0)],
@@ -224,6 +224,20 @@ struct HelperStatusPill: View {
                     )
             }
             .shadow(color: Color.black.opacity(0.06), radius: 3, x: 0, y: 1)
+        }
+    }
+}
+
+/// The macOS 26 Liquid Glass material for the top bar. It is the only API in
+/// the app that requires macOS 26, so it is the only thing behind an
+/// availability check — on macOS 15 the bar falls back to a system material and
+/// everything else looks the same.
+private struct GlassBarMaterial: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: .rect)
+        } else {
+            content.background(.ultraThinMaterial)
         }
     }
 }

@@ -84,6 +84,16 @@ struct SettingsView: View {
                     .frame(width: 160)
                 }
 
+                // Key families differ per chip generation, so a curve carried
+                // over from another Mac can point at a group this one does not
+                // have. Substituting a different signal silently is exactly the
+                // kind of thing a fan controller must never do.
+                if state.controlSourceMissing {
+                    Text("所选控制源在本机型不可用,已改用最热传感器。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+
                 HStack {
                     Text("转速迟滞")
                         .font(.system(size: 12))

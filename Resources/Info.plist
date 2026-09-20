@@ -22,8 +22,11 @@
     <string>1</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <!-- The Liquid Glass top bar needs macOS 26 and is behind an #available
+         check; everything else runs on macOS 15. Keep in sync with DEPLOY in
+         scripts/build.sh. -->
     <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
+    <string>15.0</string>
     <!-- Agent app: menu-bar extra only, no Dock tile / Cmd-Tab. -->
     <key>LSUIElement</key>
     <true/>

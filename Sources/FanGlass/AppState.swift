@@ -32,6 +32,15 @@ final class AppState: ObservableObject {
     @Published private(set) var fans: [FanStatus] = []
     @Published private(set) var fanHistories: [Int: [SensorSample]] = [:]
     @Published private(set) var scanning = true
+    /// False when this Mac exposes no writable fan target (fanless models, or
+    /// an SMC that reports fans read-only). Sensors still work; the control UI
+    /// says so rather than saving modes that can never take effect.
+    @Published private(set) var fanControlSupported = true
+    /// Set when a whole poll came back without a single usable reading. A stale
+    /// SMC handle must never be mistaken for a cold machine.
+    @Published private(set) var sensorsUnavailable = false
+    /// Set when the helper reports that a fan write did not land.
+    @Published private(set) var controlWriteFailed = false
     @Published private(set) var helperAvailable = false
     /// Protocol version the installed daemon reports; nil when none answers.
     @Published private(set) var helperVersion: Int?
@@ -58,6 +67,8 @@ final class AppState: ObservableObject {
     nonisolated(unsafe) private var scanSnapshot: [(id: String, keys: [String])] = []
     nonisolated(unsafe) private var fanCountSnapshot = 0
     nonisolated(unsafe) private var pollTick = 0
+    /// Consecutive polls that read nothing at all (worker-only).
+    nonisolated(unsafe) private var readFailureStreak = 0
     /// Poll ticks between helper re-pings, recomputed from `pollInterval` so the
     /// period stays ~10 s however fast the sensors are sampled.
     nonisolated(unsafe) private var helperCheckDivisor = 10
@@ -121,52 +132,89 @@ final class AppState: ObservableObject {
         self.smc = smc
 
         let keys = smc.allKeys()
-        var classified: [(id: String, name: String, key: String, value: Double)] = []
+        // Keep every key that DECODES, not only the ones in range at this
+        // instant: power-gated blocks read 0 °C while their domain is asleep and
+        // would otherwise be excluded for the whole session. Each sample is
+        // range-checked in pollOnce instead.
+        var classified: [(id: String, name: String, key: String, value: Double?)] = []
         for key in keys where key.hasPrefix("T") {
-            guard let value = smc.readFloat(key), value > 5, value < 120 else { continue }
-            if let c = AppState.classify(key: key) {
-                classified.append((c.id, c.name, key, value))
-            }
+            guard let raw = smc.readFloat(key), let c = AppState.classify(key: key) else { continue }
+            classified.append((c.id, c.name, key, AppState.plausible(raw) ? raw : nil))
         }
-        var groups: [SensorGroupState] = []
+        var order: [String] = []
+        var byID: [String: SensorGroupState] = [:]
+        var evidence: Set<String> = []   // groups that produced a real reading
         for item in classified {
-            if let idx = groups.firstIndex(where: { $0.id == item.id }) {
-                groups[idx].keys.append(item.key)
-                groups[idx].value = max(groups[idx].value, item.value)
-            } else {
-                groups.append(SensorGroupState(id: item.id, name: item.name, keys: [item.key], value: item.value))
+            if byID[item.id] == nil {
+                byID[item.id] = SensorGroupState(id: item.id, name: item.name, keys: [])
+                order.append(item.id)
             }
+            guard var group = byID[item.id] else { continue }
+            group.keys.append(item.key)
+            if let v = item.value {
+                evidence.insert(item.id)
+                group.value = max(group.value, v)
+            }
+            byID[item.id] = group
         }
-        let priority = ["cpu": 0, "gpu": 1, "soc": 2, "storage": 3, "memory": 4, "power": 5, "ambient": 6, "system": 7, "other": 8]
+        var groups = order.compactMap { byID[$0] }.filter { evidence.contains($0.id) }
+        let priority = ["cpu": 0, "gpu": 1, "memory": 2, "power": 3, "system": 4, "ambient": 5, "other": 6]
         groups.sort { (priority[$0.id] ?? 9) < (priority[$1.id] ?? 9) }
 
         let fanCount = smc.fanCount()
         let fanStatuses = (0..<fanCount).compactMap { smc.fanStatus($0) }
+        let controllable = smc.fanControlSupported()
         scanSnapshot = groups.map { ($0.id, $0.keys) }
         fanCountSnapshot = fanCount
 
         Task { @MainActor in
             self.groups = groups
             self.fans = fanStatuses
+            self.fanControlSupported = controllable
             self.scanning = false
             self.startPolling()
             self.promptForHelperIfNeeded()
         }
     }
 
+    /// A sensor reading worth trusting. The upper bound is generous enough for
+    /// Intel package sensors near TjMax; the lower one drops power-gated blocks
+    /// that report 0 °C while their domain is asleep.
+    nonisolated static func plausible(_ value: Double) -> Bool { value > 5 && value < 150 }
+
+    /// SMC key prefix → sensor group. Apple moves the core sensors to a new key
+    /// family every few chip generations, so the table names the generation each
+    /// rule is for; anything unrecognised lands in 其他 rather than being
+    /// mislabelled as something it is not.
+    ///   M1 / M2 / M4 / M5   CPU P-cores Tp*, E-cores Te*, GPU Tg*
+    ///   M3                  CPU Tf0*/Tf4*, GPU Tf1*/Tf2*  (no Tp*/Tg* at all)
+    ///   Intel               CPU TC0*/TCA*, GPU TG0*
     nonisolated private static func classify(key: String) -> (id: String, name: String)? {
         if key == "TVA0" { return ("ambient", "环境") }
         if key.hasPrefix("Tp") { return ("cpu", "CPU") }
+        if key.hasPrefix("Te") { return ("cpu", "CPU") }        // efficiency cores (M3/M4)
+        if key.hasPrefix("Tf") {
+            // M3 splits CPU and GPU by the second nibble. M4's TfC0/TfC1 are
+            // neither and stay unclassified.
+            switch key.dropFirst(2).first {
+            case "0", "4": return ("cpu", "CPU")
+            case "1", "2": return ("gpu", "GPU")
+            default: return ("other", "其他")
+            }
+        }
         if key.hasPrefix("Tg") { return ("gpu", "GPU") }
-        if key.hasPrefix("Te") { return ("soc", "SoC") }
-        if key.hasPrefix("Ts") { return ("storage", "存储") }
+        if key.hasPrefix("TC0") || key.hasPrefix("TCA") { return ("cpu", "CPU") }   // Intel
+        if key.hasPrefix("TG0") { return ("gpu", "GPU") }                           // Intel
         if key.hasPrefix("Tm") { return ("memory", "内存") }
+        if key.hasPrefix("Ts") { return ("system", "系统") }
         if ["TPD", "TRD", "TPS", "TVS", "TVV", "TVD", "TW0"].contains(where: key.hasPrefix) {
             return ("power", "电源")
         }
-        if ["TH0", "TIE", "TSC", "TCM", "TMV", "TUV", "TT0", "Ta0"].contains(where: key.hasPrefix) {
+        if ["TH0", "TIE", "TSC", "TMV", "TUV", "TT0", "Ta0", "TN0", "TB0", "TA0"].contains(where: key.hasPrefix) {
             return ("system", "系统")
         }
+        // TCM* is a composite/threshold sensor that tracks the hottest core;
+        // grouping it under 系统 made 系统 read like a second CPU number.
         return ("other", "其他")
     }
 
@@ -185,16 +233,32 @@ final class AppState: ObservableObject {
         guard let smc else { return }
         var newValues: [String: Double] = [:]
         for (id, keys) in scanSnapshot {
-            var best = 0.0
+            var best: Double?
             for key in keys {
-                if let v = smc.readFloat(key) { best = max(best, v) }
+                guard let v = smc.readFloat(key), AppState.plausible(v) else { continue }
+                best = max(best ?? v, v)
             }
-            newValues[id] = best
+            // Only publish what was actually read. A group left out here keeps
+            // its last value instead of reporting a fabricated 0 °C.
+            if let best { newValues[id] = best }
         }
         let fanStatuses = (0..<fanCountSnapshot).compactMap { smc.fanStatus($0) }
 
+        // A stale io_connect_t (sleep/wake, service re-match) fails every read.
+        // Taken as 0 °C that would drive a curve to minimum RPM and keep
+        // re-asserting it — with the 5 s heartbeat holding off the helper's
+        // watchdog — while the machine heats up. Treat it as "no data" instead,
+        // and retry the handle.
+        let blackout = newValues.isEmpty && !scanSnapshot.isEmpty
+        if blackout {
+            readFailureStreak &+= 1
+            if readFailureStreak % 5 == 0 { smc.reopen() }
+        } else {
+            readFailureStreak = 0
+        }
+
         Task { @MainActor in
-            self.applyPollResults(sensorValues: newValues, fanStatuses: fanStatuses)
+            self.applyPollResults(sensorValues: newValues, fanStatuses: fanStatuses, sensorsOK: !blackout)
         }
 
         // Re-ping the helper about every 10 s: it can be installed, uninstalled,
@@ -209,7 +273,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func applyPollResults(sensorValues: [String: Double], fanStatuses: [FanStatus]) {
+    private func applyPollResults(sensorValues: [String: Double], fanStatuses: [FanStatus], sensorsOK: Bool) {
         let now = Date()
         for i in groups.indices {
             if let v = sensorValues[groups[i].id] {
@@ -220,7 +284,11 @@ final class AppState: ObservableObject {
                 }
             }
         }
-        fans = fanStatuses
+        // Keep the last known fans when a transient failure returns none:
+        // clearing them would flash 未检测到风扇 and stall the control loop.
+        if !fanStatuses.isEmpty || fans.isEmpty { fans = fanStatuses }
+        let unavailable = !sensorsOK
+        if sensorsUnavailable != unavailable { sensorsUnavailable = unavailable }
         for fan in fanStatuses {
             var h = fanHistories[fan.index] ?? []
             h.append(SensorSample(time: now, value: fan.actualRPM))
@@ -233,36 +301,50 @@ final class AppState: ObservableObject {
 
     // MARK: - control decisions (MainActor; sends dispatched to worker)
 
-    var controlTemperature: Double {
-        if settings.controlSource == "max" {
-            return groups.filter { $0.id != "ambient" }.map(\.value).max() ?? 0
-        }
-        return groups.first(where: { $0.id == settings.controlSource })?.value
-            ?? groups.map(\.value).max() ?? 0
+    /// The temperature the curve follows, or nil when nothing trustworthy is
+    /// available. Callers must not substitute 0 — that is the whole point.
+    var controlTemperatureValue: Double? {
+        guard !sensorsUnavailable else { return nil }
+        if let g = groups.first(where: { $0.id == settings.controlSource }) { return g.value }
+        // "max", or a saved source this Mac does not have (different chip
+        // family, or a group retired by an update — Settings says which).
+        return groups.filter { $0.id != "ambient" }.map(\.value).max()
+    }
+
+    var controlTemperature: Double { controlTemperatureValue ?? 0 }
+
+    /// True when the saved control source has no matching group on this Mac.
+    var controlSourceMissing: Bool {
+        let id = settings.controlSource
+        return id != "max" && !groups.isEmpty && !groups.contains { $0.id == id }
     }
 
     private func controlDecide() {
-        guard helperAvailable else { return }
+        // Nothing to decide without a helper to carry it out, or on hardware
+        // that has no writable fan target — a saved config copied from another
+        // Mac must not make the helper hammer the SMC once a second.
+        guard helperAvailable, fanControlSupported else { return }
         for fan in fans {
             let config = settings.fanConfig(for: fan.index)
             switch config.mode {
             case .auto:
-                if fanForcedActive[fan.index] == true {
-                    fanForcedActive[fan.index] = false
-                    lastSentRPM.removeValue(forKey: fan.index)
-                    worker.async { HelperClient.shared.auto(fan: fan.index) }
-                }
-                targetRPMs[fan.index] = 0
+                releaseToAuto(fan: fan.index)
 
             case .fixed:
                 let rpm = fan.minRPM + config.fixedPercent / 100 * (fan.maxRPM - fan.minRPM)
                 sendHold(fan: fan.index, rpm: rpm)
 
             case .curve:
+                guard let temp = controlTemperatureValue else {
+                    // No trustworthy temperature: hand the fan back to macOS
+                    // rather than act on what the curve says about 0 °C.
+                    releaseToAuto(fan: fan.index)
+                    continue
+                }
                 let pct = CurveMath.evaluate(
                     xs: config.curve.map(\.temp),
                     ys: config.curve.map(\.percent),
-                    x: controlTemperature
+                    x: temp
                 )
                 let rpm = fan.minRPM + max(0, min(100, pct)) / 100 * (fan.maxRPM - fan.minRPM)
                 sendHold(fan: fan.index, rpm: rpm)
@@ -279,9 +361,27 @@ final class AppState: ObservableObject {
             lastSentRPM[fan] = rpm
             lastSentTime[fan] = Date()
             fanForcedActive[fan] = true
-            worker.async { HelperClient.shared.hold(fan: fan, rpm: rpm) }
+            worker.async { [weak self] in
+                let ok = HelperClient.shared.hold(fan: fan, rpm: rpm)
+                Task { @MainActor in self?.applyControlResult(ok) }
+            }
         }
         targetRPMs[fan] = rpm
+    }
+
+    /// Hand a fan back to macOS without touching the user's saved mode.
+    private func releaseToAuto(fan: Int) {
+        targetRPMs[fan] = 0
+        guard fanForcedActive[fan] == true else { return }
+        fanForcedActive[fan] = false
+        lastSentRPM.removeValue(forKey: fan)
+        worker.async { HelperClient.shared.auto(fan: fan) }
+    }
+
+    /// The helper answers whether the SMC write landed; discarding that answer
+    /// is how a UI ends up showing a target RPM nothing ever applied.
+    private func applyControlResult(_ ok: Bool) {
+        if controlWriteFailed != !ok { controlWriteFailed = !ok }
     }
 
     // MARK: - UI-facing mutations
@@ -438,7 +538,9 @@ final class AppState: ObservableObject {
 
     private func checkOverheat() {
         let threshold = settings.overheatThreshold
-        guard threshold > 0 else { return }
+        // Stale values are still on screen while sensors are down; they must
+        // not keep firing an alert every two minutes.
+        guard threshold > 0, !sensorsUnavailable else { return }
         let hottest = hottestTemperature
         guard hottest >= threshold else { return }
         guard Date().timeIntervalSince(lastOverheatAlert) > 120 else { return }
@@ -479,8 +581,10 @@ final class AppState: ObservableObject {
         groups.filter { $0.id != "ambient" }.map(\.value).max() ?? 0
     }
 
+    /// The fastest fan — on a 2-fan MacBook Pro or Mac Pro, fan 0 alone would
+    /// under-report the machine.
     var primaryFanRPM: Double {
-        fans.first?.actualRPM ?? 0
+        fans.map(\.actualRPM).max() ?? 0
     }
 
     func selection(forFan index: Int) -> FanSelection {

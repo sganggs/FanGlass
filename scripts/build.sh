@@ -6,27 +6,47 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$DIR/build"
 APP="$BUILD/FanGlass.app"
 SDK="$(xcrun --show-sdk-path)"
-TARGET="arm64-apple-macosx26.0"
+# Keep in sync with LSMinimumSystemVersion in Resources/Info.plist. The only
+# macOS 26 API in the app (the top bar's Liquid Glass) is behind an #available
+# check, so 15.0 is the real floor.
+DEPLOY="15.0"
+# Apple Silicon only by default. The whole app cross-compiles cleanly to
+# x86_64, but the Intel fan path has never been exercised on real hardware —
+# build a universal binary with FANGLASS_ARCHS="arm64 x86_64" if you have one.
+ARCHS="${FANGLASS_ARCHS:-arm64}"
+HOST_ARCH="$(uname -m)"
 
 mkdir -p "$BUILD"
 
 echo "▸ compiling helper…"
-swiftc -O -o "$BUILD/fanglass-helper" \
-    "$DIR/Sources/HelperTool/main.swift" \
-    "$DIR/Sources/Shared/SMC.swift" "$DIR/Sources/Shared/HelperProtocol.swift" \
-    -sdk "$SDK" -target "$TARGET" \
-    -framework IOKit -framework Foundation
+HELPER_SLICES=()
+for ARCH in $ARCHS; do
+    swiftc -O -o "$BUILD/fanglass-helper-$ARCH" \
+        "$DIR/Sources/HelperTool/main.swift" \
+        "$DIR/Sources/Shared/SMC.swift" "$DIR/Sources/Shared/HelperProtocol.swift" \
+        -sdk "$SDK" -target "$ARCH-apple-macosx$DEPLOY" \
+        -framework IOKit -framework Foundation
+    HELPER_SLICES+=("$BUILD/fanglass-helper-$ARCH")
+done
+lipo -create -output "$BUILD/fanglass-helper" "${HELPER_SLICES[@]}"
 # Sign before it is copied into Resources: --deep's handling of a plain
 # executable nested in a bundle is unreliable.
 codesign --force --sign - "$BUILD/fanglass-helper"
 
 echo "▸ compiling app…"
-find "$DIR/Sources/FanGlass" "$DIR/Sources/Shared" -name "*.swift" -print0 \
-| xargs -0 swiftc -O -o "$BUILD/FanGlass" \
-    -sdk "$SDK" -target "$TARGET" \
-    -module-name FanGlass \
-    -framework SwiftUI -framework Foundation -framework IOKit \
-    -framework UserNotifications -framework ServiceManagement -framework AppKit
+APP_SOURCES=()
+while IFS= read -r -d "" f; do APP_SOURCES+=("$f"); done \
+    < <(find "$DIR/Sources/FanGlass" "$DIR/Sources/Shared" -name "*.swift" -print0)
+APP_SLICES=()
+for ARCH in $ARCHS; do
+    swiftc -O -o "$BUILD/FanGlass-$ARCH" "${APP_SOURCES[@]}" \
+        -sdk "$SDK" -target "$ARCH-apple-macosx$DEPLOY" \
+        -module-name FanGlass \
+        -framework SwiftUI -framework Foundation -framework IOKit \
+        -framework UserNotifications -framework ServiceManagement -framework AppKit
+    APP_SLICES+=("$BUILD/FanGlass-$ARCH")
+done
+lipo -create -output "$BUILD/FanGlass" "${APP_SLICES[@]}"
 
 echo "▸ assembling FanGlass.app…"
 rm -rf "$APP"
@@ -44,7 +64,7 @@ chmod +x "$APP/Contents/Resources/scripts/"*.sh
 if [ -f "$DIR/tools/make_icon.swift" ]; then
     echo "▸ generating icon…"
     swiftc -O -o "$BUILD/make_icon" "$DIR/tools/make_icon.swift" \
-        -sdk "$SDK" -target "$TARGET" -framework AppKit 2>/dev/null \
+        -sdk "$SDK" -target "$HOST_ARCH-apple-macosx$DEPLOY" -framework AppKit 2>/dev/null \
     && "$BUILD/make_icon" "$BUILD/icon_1024.png" 2>/dev/null \
     && {
         ICONSET="$BUILD/AppIcon.iconset"

@@ -2,19 +2,45 @@
 // Listens on /var/run/fanglass.sock (JSON-lines, one request per connection).
 //
 // Commands:
-//   {"cmd":"ping"}                      → {"ok":true,"version":3}
+//   {"cmd":"ping"}                      → {"ok":true,"version":4}
 //   {"cmd":"hold","fan":0,"rpm":2500}   → hold fan at rpm; helper re-asserts every 1s
 //   {"cmd":"auto","fan":0}              → return fan to system control
 //   {"cmd":"autoAll"}                   → all fans back to system control
 //   {"cmd":"status"}                    → {"ok":true,"holds":{"0":2500}}
 //
 // Safety: macOS re-asserts automatic control, so "hold" mode re-writes the target
-// every second. If the app goes silent for 20s the watchdog restores auto, and
-// SIGTERM/SIGINT restore auto before exiting.
+// every second. If the app goes silent for 20s the watchdog restores auto,
+// SIGTERM/SIGINT restore auto before exiting, and 10 s of failing SMC writes
+// also restores auto instead of hammering hardware that is not listening.
+//
+// Trust: the socket is reachable by any local process, so the gate is the
+// peer's uid (LOCAL_PEERCRED) — only root and the user currently at the console
+// may send commands.
 import Foundation
 
 let socketPath = HelperProtocol.socketPath
 let watchdogInterval: TimeInterval = 20
+
+func log(_ message: String) {
+    FileHandle.standardOutput.write("[helper] \(message)\n".data(using: .utf8)!)
+}
+
+/// The uid of whoever is sitting at this Mac, or nil when nobody is.
+func consoleUserID() -> uid_t? {
+    var info = stat()
+    guard stat("/dev/console", &info) == 0 else { return nil }
+    return info.st_uid
+}
+
+/// Only root and the console user may drive the fans. Without this any local
+/// process — including another logged-in user — could pin the fans at minimum.
+func peerAuthorized(_ fd: Int32) -> Bool {
+    var cred = xucred()
+    var len = socklen_t(MemoryLayout<xucred>.size)
+    guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERCRED, &cred, &len) == 0,
+          cred.cr_version == UInt32(XUCRED_VERSION) else { return false }
+    return cred.cr_uid == 0 || cred.cr_uid == consoleUserID()
+}
 
 struct Request: Decodable {
     let cmd: String
@@ -28,6 +54,8 @@ final class Helper {
     var holds: [Int: Double] = [:]   // fan index → target rpm
     let stateLock = NSLock()
     var holdTimer: DispatchSourceTimer?
+    /// Consecutive 1 s cycles in which an SMC write failed (main queue only).
+    var writeFailureStreak = 0
 
     init?() {
         guard let smc = SMC.shared else { return nil }
@@ -67,10 +95,22 @@ final class Helper {
         let snapshot = holds
         stateLock.unlock()
         guard !snapshot.isEmpty else { return }
+        var failed = false
         for (fan, rpm) in snapshot {
             if !smc.setFanForced(index: fan, rpm: rpm) {
-                FileHandle.standardOutput.write("[helper] setFanForced failed for fan \(fan)\n".data(using: .utf8)!)
+                failed = true
+                log("setFanForced failed for fan \(fan)")
             }
+        }
+        // Writes that keep failing mean a stale SMC handle or a model that does
+        // not accept forced speeds. Retry the handle, then hand the fans back to
+        // macOS rather than re-asserting a target that never lands.
+        if failed {
+            writeFailureStreak += 1
+            if writeFailureStreak == 5 { smc.reopen() }
+            if writeFailureStreak >= 10 { restoreAutoAll(reason: "SMC writes failing") }
+        } else {
+            writeFailureStreak = 0
         }
     }
 
@@ -82,8 +122,9 @@ final class Helper {
         stopHoldTimer()
         let n = smc.fanCount()
         let targets = fans.isEmpty ? Array(0..<n) : fans
+        writeFailureStreak = 0
         for i in targets { _ = smc.setFanAuto(index: i) }
-        FileHandle.standardOutput.write("[helper] restored auto (\(reason))\n".data(using: .utf8)!)
+        log("restored auto (\(reason))")
     }
 
     func handle(_ req: Request) -> [String: Any] {
@@ -155,11 +196,13 @@ guard bindResult == 0, listen(serverFD, 8) == 0 else {
     FileHandle.standardError.write("[helper] bind/listen failed: \(String(cString: strerror(errno)))\n".data(using: .utf8)!)
     exit(1)
 }
+// Reachable by the console user; who may actually issue commands is decided by
+// peerAuthorized() on every connection, not by the file mode.
 chmod(socketPath, 0o666)
 // A dead client during write must not SIGPIPE-kill us (KeepAlive would
 // restart, but we'd skip the restore-auto atexit path).
 signal(SIGPIPE, SIG_IGN)
-FileHandle.standardOutput.write("[helper] listening on \(socketPath)\n".data(using: .utf8)!)
+log("listening on \(socketPath)")
 
 // MARK: watchdog timer + signal handlers (main runloop)
 
@@ -191,6 +234,11 @@ DispatchQueue.global().async {
             }
         }
         if clientFD < 0 { continue }
+        guard peerAuthorized(clientFD) else {
+            log("rejected connection from an unauthorized uid")
+            close(clientFD)
+            continue
+        }
 
         var nosig: Int32 = 1
         setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))

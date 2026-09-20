@@ -179,6 +179,10 @@ struct AppSettings: Codable {
         hysteresisRPM = try c.decodeIfPresent(Double.self, forKey: .hysteresisRPM) ?? d.hysteresisRPM
         overheatThreshold = try c.decodeIfPresent(Double.self, forKey: .overheatThreshold) ?? d.overheatThreshold
         controlSource = try c.decodeIfPresent(String.self, forKey: .controlSource) ?? d.controlSource
+        // Retired group ids: "soc" was really the CPU efficiency cores and
+        // "storage" was a guess at Ts*, which turned out not to be storage.
+        if controlSource == "soc" { controlSource = "cpu" }
+        if controlSource == "storage" { controlSource = "system" }
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
         restoreAutoOnQuit = try c.decodeIfPresent(Bool.self, forKey: .restoreAutoOnQuit) ?? d.restoreAutoOnQuit
         fans = try c.decodeIfPresent([String: FanConfig].self, forKey: .fans) ?? d.fans
