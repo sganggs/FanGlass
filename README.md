@@ -9,10 +9,22 @@
 **仅支持 Apple Silicon（M1 及更新机型）**，暂不支持 Intel Mac（原因见[支持的设备](#支持的设备)）。
 
 <p align="center">
-  <img src="docs/menubar.png" width="330" alt="FanGlass 菜单栏面板">
+  <img src="docs/menubar-zh.png" width="328" alt="FanGlass 菜单栏面板">
 </p>
 
-<p align="center"><sub>菜单栏面板：最热传感器温度、风扇转速、各组温度与快捷模式（截图为中文界面）</sub></p>
+<p align="center"><sub>菜单栏面板：最热传感器温度、风扇转速、各组温度与快捷模式，当前模式高亮</sub></p>
+
+<p align="center">
+  <img src="docs/fans-zh.png" width="800" alt="FanGlass 风扇控制：曲线编辑器与预设">
+</p>
+
+<p align="center"><sub>风扇控制：可拖拽的风扇曲线、预设高亮、实时工作点与转速历史</sub></p>
+
+<p align="center">
+  <img src="docs/dashboard-zh.png" width="800" alt="FanGlass 仪表盘">
+</p>
+
+<p align="center"><sub>仪表盘：各传感器分组的实时温度与趋势</sub></p>
 
 ## 功能
 

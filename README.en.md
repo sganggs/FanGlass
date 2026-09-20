@@ -9,10 +9,22 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
 **Apple Silicon only (M1 and later).** Intel Macs are not supported — see [Supported Macs](#supported-macs).
 
 <p align="center">
-  <img src="docs/menubar.png" width="330" alt="FanGlass menu-bar panel">
+  <img src="docs/menubar-en.png" width="328" alt="FanGlass menu-bar panel">
 </p>
 
-<p align="center"><sub>The menu-bar panel: hottest sensor, fan RPM, per-group temperatures and quick modes. The screenshot shows the Chinese UI.</sub></p>
+<p align="center"><sub>The menu-bar panel: hottest sensor, fan RPM, per-group temperatures and quick modes, with the active mode highlighted</sub></p>
+
+<p align="center">
+  <img src="docs/fans-en.png" width="800" alt="FanGlass fan control: curve editor and presets">
+</p>
+
+<p align="center"><sub>Fan control: a draggable fan curve, the highlighted preset, the live operating point and RPM history</sub></p>
+
+<p align="center">
+  <img src="docs/dashboard-en.png" width="800" alt="FanGlass dashboard">
+</p>
+
+<p align="center"><sub>Dashboard: live temperatures and trends for every sensor group</sub></p>
 
 ## Features
 
