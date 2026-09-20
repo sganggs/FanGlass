@@ -47,9 +47,9 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
 4. On first launch FanGlass asks for administrator authorization once:
 
    > **FanGlass needs one administrator authorization**
-   > Writing fan speeds requires root privileges. FanGlass installs a small background helper to do the writing — you authorize once, and normal use never asks for a password again (only upgrading or uninstalling the helper asks once more). Reading temperatures requires no privileges at all.
+   > Writing fan speeds requires root privileges, so FanGlass needs one administrator authorization to install the background helper that does the writing.
    >
-   > The helper is installed as a background service (starts at boot, keeps running after you quit FanGlass) and can be removed at any time from Settings → Privileged Helper.
+   > Upgrading or uninstalling the helper asks once more; the helper stays resident in the background and can be removed at any time from Settings → Privileged Helper.
 
    Click **安装助手** (Install Helper) and enter your login password. The status pill in the window turns to "助手已连接" (helper connected) and you can start driving the fans.
 

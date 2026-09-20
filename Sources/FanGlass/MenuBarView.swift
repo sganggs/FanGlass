@@ -120,12 +120,30 @@ struct MenuBarView: View {
                         .buttonStyle(LiquidButtonStyle(compact: true))
                         .fixedSize()
                 }
+            } else if state.helperOutdated {
+                // Same state the fan page and the top-bar pill report: an old
+                // daemon may not understand this build's commands, so the
+                // highlight below cannot be taken at face value either.
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                    Text("特权助手版本过旧，部分指令可能不生效")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button("更新") { state.requestHelperInstall(reason: .outdated) }
+                        .buttonStyle(LiquidButtonStyle(compact: true))
+                        .fixedSize()
+                }
             } else if state.sensorsUnavailable {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
-                    Text("传感器读取失败,已恢复自动控制")
+                    // Only curve-mode fans are handed back; a fan pinned to a
+                    // fixed RPM keeps its target, so do not claim otherwise.
+                    Text("传感器读取失败，曲线模式已恢复系统自动控制")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -164,12 +182,9 @@ struct MenuBarView: View {
                                    action: @escaping () -> Void) -> some View {
         Button(title, action: action)
             .buttonStyle(LiquidButtonStyle(compact: true, active: active))
-            // Without a helper the pills still work — they save the mode, they
-            // just cannot move a fan yet — so the row must not read as disabled,
-            // and the selected pill least of all: dimming the one piece of
-            // feedback that confirms the user's click is exactly backwards.
-            // The orange line above already says it will not take effect.
-            .opacity(state.helperAvailable || active ? 1 : 0.55)
+            // Never dimmed, helper or not: clicking one of these pills is the
+            // main path to the install prompt, so they must read as clickable.
+            // The warning row above carries the "will not take effect" signal.
             .frame(maxWidth: .infinity)
             .layoutPriority(1)
     }

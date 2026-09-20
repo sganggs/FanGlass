@@ -208,25 +208,30 @@ extension HelperInstaller.Reason {
         case .firstLaunch: return "FanGlass 需要一次管理员授权"
         case .outdated:    return "特权助手需要更新"
         case .manual:      return "安装特权助手"
-        case .modePicked, .presetPicked, .banner, .statusPill:
+        // Neither entry point came from picking a mode: one is a warning
+        // banner, the other the top-bar status pill.
+        case .banner, .statusPill:
+            return "安装特权助手以控制风扇转速"
+        case .modePicked, .presetPicked:
             return "要让这个模式生效,需要先安装特权助手"
         }
     }
 
-    /// What is actually being installed, in one line. Shown by both the sheet
-    /// and the NSAlert: the alert is the only thing a first-launch user sees
-    /// before typing an admin password, so it must not be the vaguer of the two.
+    /// The caveat, in one line. Shown by both the sheet and the NSAlert: the
+    /// alert is the only thing a first-launch user sees before typing an admin
+    /// password, so it must not be the vaguer of the two.
     static let uninstallNote =
-        "助手会作为后台服务常驻(开机自启,退出 FanGlass 后仍在运行),可随时在「设置 → 特权助手」中卸载。"
+        "升级或卸载助手时会再询问一次；助手常驻后台，可随时在「设置 → 特权助手」中卸载。"
 
     var message: String {
         switch self {
         case .outdated:
             return "已安装的助手版本较旧,可能无法执行这一版 FanGlass 的指令。更新只需再授权一次。"
         default:
-            // Deliberately not "之后无需再输入密码":升级或卸载助手时还会问一次,
+            // Deliberately not "之后无需再输入密码"：升级或卸载助手时还会问一次，
             // and a promise the app's own code path breaks is worse than none.
-            return "风扇转速的写入需要 root 权限。FanGlass 会安装一个后台助手来完成写入,只需授权一次;日常使用不会再要求密码(仅在升级或卸载助手时会再询问一次)。温度读取不需要任何权限。"
+            // `uninstallNote` carries that caveat; this line stays one sentence.
+            return "写入风扇转速需要 root 权限，因此需要一次管理员授权，安装负责写入的后台助手。"
         }
     }
 

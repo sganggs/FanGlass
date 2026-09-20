@@ -47,16 +47,24 @@ struct HelperOnboardingView: View {
                 }
             }
 
+            // Explanation on top, buttons right-aligned below — the shape of a
+            // system authorization dialog. Beside the buttons this sentence (the
+            // same constant the NSAlert path appends) had ~226 pt to live in and
+            // wrapped to three lines.
+            Text(HelperInstaller.Reason.uninstallNote)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
             HStack(spacing: 10) {
-                // Same sentence the NSAlert path appends, from the same constant.
-                Text(HelperInstaller.Reason.uninstallNote)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 12)
                 Button("稍后") { state.cancelInstallRequest() }
                     .buttonStyle(LiquidButtonStyle())
                     .disabled(phase.isBusy)
+                    // Esc must reach the same code path as the button, not just
+                    // tear the sheet down behind the pending intent's back.
+                    .keyboardShortcut(.cancelAction)
                 Button(reason.confirmTitle) { state.beginInstall() }
                     .buttonStyle(LiquidButtonStyle(prominent: true))
                     .disabled(phase.isBusy)

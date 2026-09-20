@@ -104,6 +104,8 @@ final class AppState: ObservableObject {
     /// bumped it, so a failed update can put it back instead of silently never
     /// asking again about a version that never got installed.
     private var prePromptHelperVersion: Int?
+    /// Clears a finished install note after a few seconds (see below).
+    private var noteExpiry: Task<Void, Never>?
 
     /// Read by AppDelegate on termination (must stay nonisolated).
     nonisolated(unsafe) static var restoreAutoOnQuitFlag = true
@@ -120,7 +122,10 @@ final class AppState: ObservableObject {
         helperVersion = version
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         applyLaunchAtLogin()
-        installer.onPhaseChange = { [weak self] phase in self?.installPhase = phase }
+        installer.onPhaseChange = { [weak self] phase in
+            self?.installPhase = phase
+            self?.scheduleNoteExpiry(for: phase)
+        }
         observeSystemEvents()
         worker.async { [weak self] in self?.bootstrap() }
     }
@@ -403,10 +408,15 @@ final class AppState: ObservableObject {
         if let g = groups.first(where: { $0.id == settings.controlSource }) { return g.value }
         // "max", or a saved source this Mac does not have (different chip
         // family, or a group retired by an update — Settings says which).
-        return groups.filter { $0.id != "ambient" }.map(\.value).max()
+        return loadGroups.map(\.value).max()
     }
 
-    var controlTemperature: Double { controlTemperatureValue ?? 0 }
+    /// The groups that stand for how hard this Mac is working. 环境 is the room,
+    /// and 其他 is the catch-all the menu-bar panel hides — a headline or an
+    /// overheat alert naming a sensor no visible row explains is worse than none.
+    private var loadGroups: [SensorGroupState] {
+        groups.filter { $0.id != "ambient" && $0.id != "other" }
+    }
 
     /// True when the saved control source has no matching group on this Mac.
     var controlSourceMissing: Bool {
@@ -558,9 +568,24 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Same probe, awaited. `refreshHelperStatus` leaves the answer arriving one
+    /// hop later, which is no use to a caller that is about to decide something.
+    private func probeHelperNow() async {
+        let version = await withCheckedContinuation { (continuation: CheckedContinuation<Int?, Never>) in
+            helperQueue.async { continuation.resume(returning: HelperClient.shared.probe()) }
+        }
+        applyHelperProbe(version)
+    }
+
     private func applyHelperProbe(_ version: Int?) {
         let ok = version != nil
-        if helperAvailable != ok { helperAvailable = ok }
+        if helperAvailable != ok {
+            helperAvailable = ok
+            // A failure note that outlived its subject: the helper's presence has
+            // changed under it, so it can only confuse. An outcome still inside
+            // its own expiry window is fresh feedback and is left alone.
+            if noteExpiry == nil { installer.clearNote() }
+        }
         if helperVersion != version { helperVersion = version }
     }
 
@@ -612,11 +637,12 @@ final class AppState: ObservableObject {
                 reconcileHelperHolds()   // a fresh daemon may already hold fans
                 controlDecide()
             } else {
-                // A *failed* update must not consume the one prompt this protocol
+                // A failed update must not consume the one prompt this protocol
                 // version gets: the machine is now in the state the prompt was
-                // trying to fix. A declined one keeps the bump — the user said no,
-                // and nagging every launch is not an answer to that.
-                if case .failed = installPhase, let previous = prePromptHelperVersion {
+                // trying to fix. Dismissing the password dialog counts the same —
+                // that answers nothing, so offer the update again next launch.
+                // Only 稍后 keeps the bump (see `cancelInstallRequest`).
+                if installPhase.isProblem, let previous = prePromptHelperVersion {
                     settings.lastPromptedHelperVersion = previous
                 }
                 prePromptHelperVersion = nil
@@ -643,16 +669,41 @@ final class AppState: ObservableObject {
         prePromptHelperVersion = nil
     }
 
+    /// Any dismissal of the onboarding sheet — 稍后, Escape, or SwiftUI tearing
+    /// it down — must drop the intent it captured, or a much later install would
+    /// replay a choice the user has long forgotten. An install in flight is
+    /// exempt: `beginInstall` moves the intent out itself and replays it there.
+    func installSheetDismissed() {
+        guard !installPhase.isBusy else { return }
+        cancelInstallRequest()
+    }
+
+    /// Terminal phases are a report on something that just happened, not state:
+    /// left alone, the Settings card still reads 助手已安装并连接 hours later,
+    /// next to a live detail line that may by then say something else.
+    private func scheduleNoteExpiry(for phase: HelperInstaller.Phase) {
+        noteExpiry?.cancel()
+        noteExpiry = nil
+        // .failed carries a diagnostic worth reading at the user's own pace;
+        // only the routine outcomes expire on a timer.
+        switch phase {
+        case .installed, .uninstalled, .canceled: break
+        default: return
+        }
+        noteExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.installer.clearNote()
+        }
+    }
+
     private func promptForHelperIfNeeded() {
         let reason: HelperInstaller.Reason
         if !helperAvailable {
             guard !settings.helperOnboardingShown else { return }
-            settings.helperOnboardingShown = true   // offered once, whatever the outcome
             reason = .firstLaunch
         } else if helperOutdated {
             guard settings.lastPromptedHelperVersion < HelperProtocol.version else { return }
-            prePromptHelperVersion = settings.lastPromptedHelperVersion
-            settings.lastPromptedHelperVersion = HelperProtocol.version
             reason = .outdated   // never reinstall on our own; it costs a password
         } else {
             return
@@ -661,7 +712,26 @@ final class AppState: ObservableObject {
         // before a modal takes over, and NSAlert mid-launch is fragile.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            self?.requestHelperInstall(reason: reason)
+            guard let self else { return }
+            // `init`'s single probe can predate launchd binding the socket — the
+            // normal race right after a reboot when FanGlass is a login item.
+            // Asking for a password for a helper that is already there would be
+            // bad enough; burning the one-shot flag on it is worse, so both the
+            // condition and the flags wait until the prompt is really going up.
+            await self.probeHelperNow()
+            switch reason {
+            case .firstLaunch:
+                guard !self.helperAvailable, !self.settings.helperOnboardingShown else { return }
+                self.settings.helperOnboardingShown = true   // offered once, whatever the outcome
+            case .outdated:
+                guard self.helperOutdated,
+                      self.settings.lastPromptedHelperVersion < HelperProtocol.version else { return }
+                self.prePromptHelperVersion = self.settings.lastPromptedHelperVersion
+                self.settings.lastPromptedHelperVersion = HelperProtocol.version
+            default:
+                return
+            }
+            self.requestHelperInstall(reason: reason)
         }
     }
 
@@ -786,7 +856,7 @@ final class AppState: ObservableObject {
     // MARK: - display helpers
 
     var hottestTemperature: Double {
-        groups.filter { $0.id != "ambient" }.map(\.value).max() ?? 0
+        loadGroups.map(\.value).max() ?? 0
     }
 
     /// The fastest fan — on a 2-fan MacBook Pro or Mac Pro, fan 0 alone would

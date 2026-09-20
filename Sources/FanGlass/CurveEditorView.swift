@@ -5,7 +5,10 @@ import SwiftUI
 
 struct CurveEditorView: View {
     let points: [CurvePoint]
-    let currentTemp: Double
+    /// nil when no trustworthy control temperature is available. Clamping a
+    /// missing reading to the axis minimum would draw a working point at 25 °C
+    /// that nothing on this Mac is actually reporting.
+    let currentTemp: Double?
     let currentPercent: Double
     let minRPM: Double
     let maxRPM: Double
@@ -34,7 +37,9 @@ struct CurveEditorView: View {
             ZStack(alignment: .topLeading) {
                 gridView(plot: plot)
                 curveView(plot: plot)
-                currentTempMarker(plot: plot)
+                if let currentTemp {
+                    currentTempMarker(plot: plot, temp: currentTemp)
+                }
                 pointsView(plot: plot)
             }
             .contentShape(Rectangle())
@@ -149,8 +154,8 @@ struct CurveEditorView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: draft)
     }
 
-    private func currentTempMarker(plot: CGRect) -> some View {
-        let x = plot.minX + CGFloat((currentTemp - tempRange.lowerBound) / (tempRange.upperBound - tempRange.lowerBound)) * plot.width
+    private func currentTempMarker(plot: CGRect, temp: Double) -> some View {
+        let x = plot.minX + CGFloat((temp - tempRange.lowerBound) / (tempRange.upperBound - tempRange.lowerBound)) * plot.width
         let clampedX = min(max(x, plot.minX), plot.maxX)
         return ZStack {
             Path { path in
@@ -160,7 +165,7 @@ struct CurveEditorView: View {
             .stroke(Color.orange.opacity(0.7), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
 
             // actual operating point
-            let op = pointToView(CurvePoint(temp: currentTemp, percent: currentPercent), plot: plot)
+            let op = pointToView(CurvePoint(temp: temp, percent: currentPercent), plot: plot)
             Circle()
                 .fill(Color.orange)
                 .frame(width: 9, height: 9)

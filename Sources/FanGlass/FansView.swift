@@ -54,9 +54,11 @@ struct FansView: View {
                             reason: .outdated
                         )
                     } else if state.sensorsUnavailable {
+                        // Only the curve branch releases on a blackout; a fan
+                        // in 固定转速 keeps being held at its target.
                         NoticeCard(
-                            title: "传感器读取失败,已恢复系统自动控制",
-                            detail: "SMC 暂时无法读取温度,曲线模式不会按 0°C 继续下发转速。"
+                            title: "传感器读取失败，曲线模式已恢复系统自动控制",
+                            detail: "SMC 暂时无法读取温度，曲线不会按 0°C 继续下发转速；固定转速的风扇仍保持设定值。"
                         )
                     } else if state.controlWriteFailed {
                         NoticeCard(
@@ -261,7 +263,7 @@ struct FanCardView: View {
 
             CurveEditorView(
                 points: config.curve,
-                currentTemp: state.controlTemperature,
+                currentTemp: state.controlTemperatureValue,
                 currentPercent: percent(of: fan.actualRPM),
                 minRPM: fan.minRPM,
                 maxRPM: fan.maxRPM

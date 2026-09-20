@@ -150,7 +150,7 @@ struct SettingsView: View {
                 )
                 .tint(.orange)
 
-                Text("任一传感器(除环境)超过阈值时发送系统通知;拖到最左关闭。")
+                Text("任一传感器(除环境和其他)超过阈值时发送系统通知;拖到最左关闭。")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }

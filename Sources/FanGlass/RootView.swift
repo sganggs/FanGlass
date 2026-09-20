@@ -63,7 +63,8 @@ struct RootView: View {
         // opened by that click; onChange covers it already being open.
         .onAppear { consumePendingTab() }
         .onChange(of: state.pendingTab) { _, _ in consumePendingTab() }
-        .sheet(isPresented: $state.showInstallSheet) {
+        .sheet(isPresented: $state.showInstallSheet,
+               onDismiss: { state.installSheetDismissed() }) {
             HelperOnboardingView().environmentObject(state)
         }
     }
@@ -199,11 +200,10 @@ struct HelperStatusPill: View {
             }
             .buttonStyle(.plain)
             .help(status == .outdated ? "点按更新特权助手" : "点按安装特权助手")
-            // Same signal LiquidButtonStyle gives: the surface answers the cursor.
-            .onHover { inside in
-                hovering = inside
-                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
+            // Fill only: a pushed NSCursor has no exit path here — the Button
+            // itself is replaced the moment the install succeeds, so onHover
+            // never reports the cursor leaving and the pointing hand leaks.
+            .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.15), value: hovering)
         }
     }
@@ -229,8 +229,11 @@ struct HelperStatusPill: View {
         .padding(.vertical, 5)
         .background {
             ZStack(alignment: .top) {
+                // `hovering` belongs to the Button branch and is never told the
+                // cursor left when that branch is swapped out mid-hover, so the
+                // connected pill must not read it.
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(hovering ? 0.85 : 0.6))
+                    .fill(Color.white.opacity(hovering && actionable ? 0.85 : 0.6))
                 Capsule(style: .continuous)
                     .strokeBorder(
                         LinearGradient(
