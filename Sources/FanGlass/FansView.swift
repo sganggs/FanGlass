@@ -48,7 +48,7 @@ struct FansView: View {
                         // the only trace is the Settings card, which the user has
                         // to go looking for — and the prompt fires only once.
                         helperBanner(
-                            title: "特权助手版本过旧,部分指令可能不生效",
+                            title: "特权助手版本过旧，部分指令可能不生效",
                             detail: "更新只需再授权一次。",
                             action: "更新助手…",
                             reason: .outdated
