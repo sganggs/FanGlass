@@ -58,11 +58,11 @@ struct FansView: View {
                         // on a fixed speed is still held at its target.
                         NoticeCard(
                             title: "Sensor read failed; curve mode is back on automatic control",
-                            detail: "The SMC cannot read temperatures right now, so curves will not go on driving fans as if it were 0°C; fans on a fixed speed keep their target."
+                            detail: "The SMC cannot read temperatures right now, so curve mode will not keep driving the fans as though the temperature were 0°C; fans on a fixed speed keep their target."
                         )
                     } else if state.controlWriteFailed {
                         NoticeCard(
-                            title: "Fan speed write did not take effect",
+                            title: "The fan speed change did not take effect",
                             detail: "The helper received the command but the SMC refused the write; this Mac may not allow forcing a fan speed."
                         )
                     }
@@ -77,7 +77,7 @@ struct FansView: View {
                         Spacer()
                         // An action, not a mode — no accent `active` treatment,
                         // but it must not look clickable when it would do nothing.
-                        Button("Restore all to Auto") { state.restoreAutoAll() }
+                        Button("Restore All to Auto") { state.restoreAutoAll() }
                             .buttonStyle(LiquidButtonStyle())
                             .disabled(state.allFansAuto || !state.fanControlSupported)
                     }

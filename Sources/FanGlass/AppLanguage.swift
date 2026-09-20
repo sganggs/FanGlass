@@ -23,8 +23,27 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     private static let appleLanguagesKey = "AppleLanguages"
 
     static var current: AppLanguage {
-        guard let raw = UserDefaults.standard.string(forKey: defaultsKey) else { return .system }
-        return AppLanguage(rawValue: raw) ?? .system
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: defaultsKey) {
+            return AppLanguage(rawValue: raw) ?? .system
+        }
+        // No FanGlass key yet, but the user may still have pinned a language in
+        // System Settings → General → Language & Region → Applications, which
+        // writes AppleLanguages into FanGlass's OWN defaults domain. Read that
+        // domain by name rather than through `standard`, whose search list also
+        // carries the global (system-wide) AppleLanguages — every Mac has one,
+        // and taking it would report a per-app override that does not exist.
+        // Strictly a read: writing here would pin the app to whatever the list
+        // happened to say at first launch.
+        guard let identifier = Bundle.main.bundleIdentifier,
+              let domain = defaults.persistentDomain(forName: identifier),
+              let first = (domain[appleLanguagesKey] as? [String])?.first?.lowercased()
+        else { return .system }
+        if first.hasPrefix("zh") { return .chineseSimplified }
+        if first.hasPrefix("en") { return .english }
+        // Some third language: FanGlass has no table for it, so the bundle
+        // falls back to English — which is what "follow the system" means here.
+        return .system
     }
 
     /// Every language names itself, the way system language pickers do. Reading
@@ -33,7 +52,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .system:
-            return String(localized: "System")
+            return String(localized: "Follow system")
         default:
             let locale = Locale(identifier: rawValue)
             return locale.localizedString(forIdentifier: rawValue) ?? rawValue

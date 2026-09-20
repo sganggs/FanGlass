@@ -9,6 +9,16 @@ struct DashboardView: View {
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14),
                            GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
+    /// "1 probe" / "12 probes". The English value carries automatic grammar
+    /// agreement markup (`^[%lld probe](inflect: true)`), and only the
+    /// AttributedString initializer resolves it — `String(localized:)` hands the
+    /// markup back verbatim, which would land on screen. Interpolating the count
+    /// into the key (rather than formatting afterwards) is what gives the
+    /// inflection engine a number to agree with; the key is still "%lld probes".
+    private static func probeCount(_ count: Int) -> String {
+        String(AttributedString(localized: "\(count) probes").characters)
+    }
+
     var body: some View {
         GlassScrollView(topMargin: 68, onScrolled: onScrolled) {
             VStack(alignment: .leading, spacing: 16) {
@@ -20,8 +30,7 @@ struct DashboardView: View {
                     overviewCard
                     GlassSectionHeader(
                         title: String(localized: "Sensors"),
-                        detail: String(format: String(localized: "%lld probes"),
-                                       state.groups.reduce(0) { $0 + $1.keys.count })
+                        detail: Self.probeCount(state.groups.reduce(0) { $0 + $1.keys.count })
                     )
                     LazyVGrid(columns: columns, spacing: 14) {
                         ForEach(state.groups) { group in

@@ -118,7 +118,7 @@ struct MenuBarView: View {
                     Spacer(minLength: 4)
                     // Straight to the password dialog — sending the user to
                     // the Settings tab to find the card is three clicks more.
-                    Button("Install") { state.requestHelperInstall(reason: .banner) }
+                    Button("Install…") { state.requestHelperInstall(reason: .banner) }
                         .buttonStyle(LiquidButtonStyle(compact: true))
                         .fixedSize()
                 }
@@ -134,7 +134,7 @@ struct MenuBarView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
-                    Button("Update") { state.requestHelperInstall(reason: .outdated) }
+                    Button("Update…") { state.requestHelperInstall(reason: .outdated) }
                         .buttonStyle(LiquidButtonStyle(compact: true))
                         .fixedSize()
                 }
@@ -152,8 +152,8 @@ struct MenuBarView: View {
             }
 
             // One row of equal-width pills while the labels fit (Simplified
-            // Chinese always does), wrapping at natural widths when they do
-            // not — five English labels in a 296-pt box cannot share it
+            // Chinese always does), wrapping onto a second full-width row when
+            // they do not — five English labels in a 296-pt box cannot share it
             // equally without every one of them truncating to "…".
             AdaptivePillRow(spacing: 5) {
                 compactModeButton(String(localized: "Auto"), active: selection == .auto) {

@@ -54,7 +54,7 @@ A Liquid-Glass fan controller for macOS, written in plain SwiftUI with zero thir
 
    Click **Install Helper** and enter your login password. The status pill in the window turns to "Helper connected" and you can start driving the fans.
 
-Chose **Later**? Nothing is lost. The next time you pick a fixed speed, a curve preset, or a quick mode from the menu bar, FanGlass offers to install the helper right there — no hunting through Settings. The menu-bar panel carries an install button, the fan page keeps a persistent banner while the helper is missing or outdated, and the status pill itself is clickable ("Helper not installed · Install" / "Helper outdated · Update").
+Chose **Later**? Nothing is lost. The next time you pick a fixed speed, a curve preset, or a quick mode from the menu bar, FanGlass offers to install the helper right there — no hunting through Settings. The menu-bar panel carries an "Install…" button, the fan page keeps a persistent banner while the helper is missing or outdated, and the status pill itself is clickable ("Helper not installed · Install" / "Helper outdated · Update").
 
 ### 2. Build from source
 
@@ -77,7 +77,7 @@ You can also install the helper without touching the UI: `./scripts/install.sh` 
   - **Auto** hands the fan back to macOS and needs no helper.
   - **Fixed** maps the slider percentage onto the fan's own `F{i}Mn..F{i}Mx` range and applies the final value when you let go.
   - **Curve** starts from a preset and is then edited directly on the graph: drag points, double-click empty space to add, right-click to delete (2 minimum, 8 maximum). Which temperature the curve follows is chosen in Settings (CPU by default, or the hottest sensor).
-- **Settings.** UI language (System / 简体中文 / English), sampling interval (0.5–3 s), launch at login, whether to restore automatic control immediately on quit, the curve's temperature source, RPM hysteresis, the overheat threshold, and installing / reinstalling / uninstalling the privileged helper.
+- **Settings.** UI language (Follow system / 简体中文 / English), sampling interval (0.5–3 s), launch at login, whether to restore automatic control immediately on quit, the curve's temperature source, RPM hysteresis, the overheat threshold, and installing / reinstalling / uninstalling the privileged helper.
 
 ## Supported Macs
 
@@ -165,7 +165,7 @@ This Mac's SMC exposes no writable RPM target or manual-mode switch — a fanles
 That toggle goes through the system's `SMAppService`, and an ad-hoc signed build can be refused registration. Add FanGlass by hand under System Settings → General → Login Items instead.
 
 **Can the UI be switched to English?**
-Yes. The UI follows the system language by default; to pin it, choose System, 简体中文 or English under **Settings → General → Language** and relaunch FanGlass. (That setting writes the same per-app language override System Settings → General → Language & Region → Applications does.)
+Yes. The UI follows the system language by default; to pin it, choose Follow system, 简体中文 or English under **Settings → General → Language** and relaunch FanGlass. (That setting writes the same per-app language override System Settings → General → Language & Region → Applications does.)
 
 ## Design notes
 
@@ -195,7 +195,7 @@ Conventions:
 
 - UI strings in the code are **English source strings, and those strings are the localization keys**; the Chinese lives in `Resources/zh-Hans.lproj/Localizable.strings`. Every new string needs an entry in BOTH `Resources/en.lproj` and `Resources/zh-Hans.lproj` (`build.sh` runs `plutil -lint` on both and fails the build on a bad one). Nothing under `Sources/` may contain a CJK character — comments included.
 - Anything that reaches the screen through a Swift `String` (enum titles, `String(format:)`, `NSAlert`, notification content) has to go through `String(localized:)` itself; SwiftUI initialisers that take a `LocalizedStringKey` (`Text`, `Button`, `Toggle`, …) localize on their own.
-- The menu-bar quick-mode row uses the `AdaptivePillRow` layout: one row of equal-width pills while the labels fit (Chinese does), wrapping onto further rows at natural widths when they do not (English does), so a long label never truncates to "…".
+- The menu-bar quick-mode row uses the `AdaptivePillRow` layout: one row of equal-width pills while the labels fit (Chinese does), wrapping onto further rows — each one full width, with its own pills equally wide — when they do not (English does), so a long label never truncates to "…".
 - Layout: `Sources/FanGlass` (the app), `Sources/HelperTool` (the root daemon), `Sources/Shared` (SMC access and the wire protocol, compiled into both).
 - There is no Xcode project — `scripts/build.sh` calls `swiftc` directly. Run it after a change and you are done.
 - `build.sh` runs `xattr -cr` before signing: with the source tree on the Desktop or in an iCloud-synced folder the bundle picks up `com.apple.FinderInfo`, `codesign` then fails with "resource fork, Finder information, or similar detritus not allowed", and an unsigned bundle is reported to whoever downloads it as damaged.

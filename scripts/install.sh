@@ -143,7 +143,7 @@ EOF
 
 # The dialog wording follows the app's UI language; FanGlass passes it in.
 # Run by hand from a terminal, the script speaks English.
-PROMPT="${FANGLASS_PROMPT:-FanGlass needs to install a privileged helper to control fan speed.}"
+PROMPT="${FANGLASS_PROMPT:-FanGlass needs to install the Privileged Helper to control fan speed.}"
 
 # Both the script text and the prompt are passed as arguments, not interpolated
 # into AppleScript source — a path, a digest or a translation can never

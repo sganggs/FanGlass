@@ -283,7 +283,8 @@ struct LiquidButtonStyle: ButtonStyle {
 
 /// Lays a row of pills out the way the menu-bar panel always has — one row of
 /// equal-width pills — for as long as the WIDEST label fits its share, and
-/// wraps onto further rows at each pill's natural width when it does not.
+/// wraps onto further rows when it does not. Every row, wrapped or not, spans
+/// the full width with its own pills equally wide.
 ///
 /// The panel's content box is 296 pt (328 − 2×16 padding). Five 2-character
 /// Simplified Chinese labels need 40 pt each against a 55.2 pt share, so they
@@ -355,12 +356,25 @@ struct AdaptivePillRow: Layout {
         // Fewest rows that fit, then spread the pills evenly across them: a
         // plain greedy fill packs four English labels into the first row and
         // leaves "Max" orphaned under them.
-        plan.widths = widths
-        let minimum = pack(widths, available: available, cap: count).count
+        //
+        // A label wider than the whole box would be measured — and placed — at
+        // its natural width, painting outside the panel. Cap every pill at the
+        // available width so it truncates inside its own capsule instead.
+        let capped = widths.map { min($0, available) }
+        let minimum = pack(capped, available: available, cap: count).count
         let cap = Int((Double(count) / Double(minimum)).rounded(.up))
-        var rows = pack(widths, available: available, cap: cap)
-        if rows.count > minimum { rows = pack(widths, available: available, cap: count) }
+        var rows = pack(capped, available: available, cap: cap)
+        if rows.count > minimum { rows = pack(capped, available: available, cap: count) }
         plan.rows = rows
+        // Each row's slack is split evenly between the pills it holds, so every
+        // row spans the full width and the pills within a row share it equally —
+        // the same look as the single-row case, one row further down. Leaving
+        // them at their natural widths instead ends each row on a ragged edge.
+        plan.widths = Array(repeating: 0, count: count)
+        for row in rows {
+            let each = (available - spacing * CGFloat(row.count - 1)) / CGFloat(row.count)
+            for index in row { plan.widths[index] = each }
+        }
         plan.size = CGSize(
             width: available,
             height: CGFloat(rows.count) * plan.rowHeight + CGFloat(rows.count - 1) * spacing

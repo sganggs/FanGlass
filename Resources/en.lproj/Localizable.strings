@@ -1,16 +1,18 @@
 /* FanGlass — English.
-   The source strings ARE the keys, so this table is an identity map. It
-   exists so the bundle advertises an English localization at all: without
-   an en.lproj, macOS would not list FanGlass under Language & Region and
-   the in-app override could not select English.
+   The source strings ARE the keys, so this table is an identity map — bar
+   "%lld probes", whose value carries automatic grammar agreement markup so
+   one probe is not announced as "1 probes". It exists so the bundle
+   advertises an English localization at all: without an en.lproj, macOS
+   would not list FanGlass under Language & Region and the in-app override
+   could not select English.
    Every new UI string needs an entry here AND in zh-Hans.lproj. */
 
 "%.0f RPM (%.0f%%)" = "%.0f RPM (%.0f%%)";
 "%.1f s" = "%.1f s";
 "%lld fans in total" = "%lld fans in total";
-"%lld probes" = "%lld probes";
+"%lld probes" = "^[%lld probe](inflect: true)";
 "Ambient" = "Ambient";
-"Authorization cancelled; the fans stay under automatic system control" = "Authorization cancelled; the fans stay under automatic system control";
+"Authorization canceled; the fans stay under automatic system control" = "Authorization canceled; the fans stay under automatic system control";
 "Auto" = "Auto";
 "Balanced" = "Balanced";
 "CPU" = "CPU";
@@ -27,23 +29,23 @@
 "Curve temperature source" = "Curve temperature source";
 "Custom" = "Custom";
 "Dashboard" = "Dashboard";
-"Delete point" = "Delete point";
+"Delete Point" = "Delete Point";
 "Drag a point to adjust · double-click empty space to add · right-click to delete" = "Drag a point to adjust · double-click empty space to add · right-click to delete";
 "Fan %lld" = "Fan %lld";
-"Fan control" = "Fan control";
+"Fan Control" = "Fan Control";
 "Fan control is not supported on this Mac" = "Fan control is not supported on this Mac";
 "Fan control is not supported on this Mac; sensor data only" = "Fan control is not supported on this Mac; sensor data only";
 "Fan speed" = "Fan speed";
 "Fan speed is managed automatically by the system." = "Fan speed is managed automatically by the system.";
-"Fan speed write did not take effect" = "Fan speed write did not take effect";
 "FanGlass" = "FanGlass";
-"FanGlass needs authorization to uninstall the privileged helper." = "FanGlass needs authorization to uninstall the privileged helper.";
+"FanGlass needs authorization to uninstall the Privileged Helper." = "FanGlass needs authorization to uninstall the Privileged Helper.";
 "FanGlass needs one administrator authorization" = "FanGlass needs one administrator authorization";
-"FanGlass needs to install a privileged helper to control fan speed." = "FanGlass needs to install a privileged helper to control fan speed.";
+"FanGlass needs to install the Privileged Helper to control fan speed." = "FanGlass needs to install the Privileged Helper to control fan speed.";
 "FanGlass overheat alert" = "FanGlass overheat alert";
 "Fans" = "Fans";
-"Fans are set differently" = "Fans are set differently";
+"Fans are on different modes" = "Fans are on different modes";
 "Fixed" = "Fixed";
+"Follow system" = "Follow system";
 "GPU" = "GPU";
 "General" = "General";
 "Group" = "Group";
@@ -58,11 +60,11 @@
 "Hottest %.0f°C" = "Hottest %.0f°C";
 "Hottest sensor" = "Hottest sensor";
 "Hysteresis keeps the fan speed from jittering around a boundary value; set it to 0 to update on every sample." = "Hysteresis keeps the fan speed from jittering around a boundary value; set it to 0 to update on every sample.";
-"Install" = "Install";
 "Install Helper" = "Install Helper";
 "Install Helper…" = "Install Helper…";
 "Install the Privileged Helper" = "Install the Privileged Helper";
 "Install the Privileged Helper to control fan speed" = "Install the Privileged Helper to control fan speed";
+"Install…" = "Install…";
 "Language" = "Language";
 "Later" = "Later";
 "Launch at login" = "Launch at login";
@@ -77,7 +79,7 @@
 "Open FanGlass" = "Open FanGlass";
 "Other" = "Other";
 "Outdated (v%lld)" = "Outdated (v%lld)";
-"Overheat alert" = "Overheat alert";
+"Overheat Alert" = "Overheat Alert";
 "Performance" = "Performance";
 "Power" = "Power";
 "Presets" = "Presets";
@@ -90,9 +92,9 @@
 "Range %.0f–%.0f" = "Range %.0f–%.0f";
 "Refresh" = "Refresh";
 "Reinstall Helper…" = "Reinstall Helper…";
-"Relaunch now" = "Relaunch now";
+"Relaunch Now" = "Relaunch Now";
 "Requesting administrator authorization…" = "Requesting administrator authorization…";
-"Restore all to Auto" = "Restore all to Auto";
+"Restore All to Auto" = "Restore All to Auto";
 "Restore automatic fan control immediately on quit" = "Restore automatic fan control immediately on quit";
 "Running · v%lld" = "Running · v%lld";
 "Sampling interval" = "Sampling interval";
@@ -103,7 +105,6 @@
 "Settings" = "Settings";
 "Speed" = "Speed";
 "Starting the helper…" = "Starting the helper…";
-/* Shared by the sensor group and the Language picker; both mean "the system's". */
 "System" = "System";
 "Target %.0f RPM" = "Target %.0f RPM";
 "Target speed" = "Target speed";
@@ -111,14 +112,15 @@
 "Temperature threshold" = "Temperature threshold";
 "Temperature trend" = "Temperature trend";
 "The Privileged Helper needs updating" = "The Privileged Helper needs updating";
-"The SMC cannot read temperatures right now, so curves will not go on driving fans as if it were 0°C; fans on a fixed speed keep their target." = "The SMC cannot read temperatures right now, so curves will not go on driving fans as if it were 0°C; fans on a fixed speed keep their target.";
+"The SMC cannot read temperatures right now, so curve mode will not keep driving the fans as though the temperature were 0°C; fans on a fixed speed keep their target." = "The SMC cannot read temperatures right now, so curve mode will not keep driving the fans as though the temperature were 0°C; fans on a fixed speed keep their target.";
 "The SMC exposes no writable RPM target or manual-mode switch." = "The SMC exposes no writable RPM target or manual-mode switch.";
+"The fan speed change did not take effect" = "The fan speed change did not take effect";
 "The helper received the command but the SMC refused the write; this Mac may not allow forcing a fan speed." = "The helper received the command but the SMC refused the write; this Mac may not allow forcing a fan speed.";
 "The helper was installed but did not connect. Please try again." = "The helper was installed but did not connect. Please try again.";
 "The hottest sensor has reached %.0f°C (threshold %.0f°C)" = "The hottest sensor has reached %.0f°C (threshold %.0f°C)";
 "The installed helper is an older version (v%lld, v%lld required); update it before the new commands can take effect." = "The installed helper is an older version (v%lld, v%lld required); update it before the new commands can take effect.";
 "The installed helper is an older version and may not be able to carry out this build's commands. Updating costs one more authorization." = "The installed helper is an older version and may not be able to carry out this build's commands. Updating costs one more authorization.";
-"The new language is applied the next time FanGlass starts." = "The new language is applied the next time FanGlass starts.";
+"The new language takes effect the next time FanGlass starts." = "The new language takes effect the next time FanGlass starts.";
 "The operation failed (exit code %lld)" = "The operation failed (exit code %lld)";
 "The selected control source is not available on this Mac; the hottest sensor is used instead." = "The selected control source is not available on this Mac; the hottest sensor is used instead.";
 "This Mac has no controllable fans" = "This Mac has no controllable fans";
@@ -127,12 +129,12 @@
 "Time" = "Time";
 "Top fan speed" = "Top fan speed";
 "Uninstall Helper…" = "Uninstall Helper…";
-"Update" = "Update";
 "Update Helper" = "Update Helper";
 "Update Helper…" = "Update Helper…";
+"Update…" = "Update…";
 "Updating costs one more authorization." = "Updating costs one more authorization.";
 "Upgrading or uninstalling the helper asks once more; the helper stays resident in the background and can be removed at any time under Settings → Privileged Helper." = "Upgrading or uninstalling the helper asks once more; the helper stays resident in the background and can be removed at any time under Settings → Privileged Helper.";
-"With this off, fans are not restored the moment you quit; but once the helper has gone about 20 seconds without a heartbeat from FanGlass it hands them back to the system anyway." = "With this off, fans are not restored the moment you quit; but once the helper has gone about 20 seconds without a heartbeat from FanGlass it hands them back to the system anyway.";
+"With this off, fans are not restored the moment you quit. Once the helper has gone about 20 seconds without a heartbeat from FanGlass, it hands them back to the system anyway." = "With this off, fans are not restored the moment you quit. Once the helper has gone about 20 seconds without a heartbeat from FanGlass, it hands them back to the system anyway.";
 "Writing fan speeds requires root privileges and is done by a background privileged helper. Reading sensors needs no privileges." = "Writing fan speeds requires root privileges and is done by a background privileged helper. Reading sensors needs no privileges.";
 "Writing fan speeds requires root privileges, so FanGlass needs one administrator authorization to install the background helper that does the writing." = "Writing fan speeds requires root privileges, so FanGlass needs one administrator authorization to install the background helper that does the writing.";
 "Writing fan speeds requires root privileges; one authorization is all it takes." = "Writing fan speeds requires root privileges; one authorization is all it takes.";

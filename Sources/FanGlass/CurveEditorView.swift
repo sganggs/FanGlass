@@ -207,7 +207,7 @@ struct CurveEditorView: View {
                 )
                 .contextMenu {
                     if draft.count > 2 {
-                        Button("Delete point", role: .destructive) { deletePoint(id: point.id) }
+                        Button("Delete Point", role: .destructive) { deletePoint(id: point.id) }
                     }
                     Button(String(format: "%.0f°C · %.0f%%", point.temp, point.percent)) {}
                 }

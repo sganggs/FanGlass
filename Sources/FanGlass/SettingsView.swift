@@ -9,7 +9,7 @@ struct SettingsView: View {
     /// UserDefaults, which is not observable, so the picker needs state.
     @State private var language: AppLanguage = .current
     /// Set once the user picks a different language; the note (and its
-    /// "Relaunch now" button) stays until they relaunch or dismiss it.
+    /// "Relaunch Now" button) stays until they relaunch or dismiss it.
     @State private var languageNeedsRelaunch = false
 
     var body: some View {
@@ -44,7 +44,7 @@ struct SettingsView: View {
                             languageNeedsRelaunch = true
                         }
                     )) {
-                        // Each language names itself; "System" follows macOS.
+                        // Each language names itself; "Follow system" tracks macOS.
                         ForEach(AppLanguage.allCases) { option in
                             Text(option.title).tag(option)
                         }
@@ -58,11 +58,11 @@ struct SettingsView: View {
                         Image(systemName: "arrow.clockwise.circle.fill")
                             .font(.system(size: 12))
                             .foregroundStyle(GlassPalette.accent)
-                        Text("The new language is applied the next time FanGlass starts.")
+                        Text("The new language takes effect the next time FanGlass starts.")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 8)
-                        Button("Relaunch now") { AppRelaunch.now() }
+                        Button("Relaunch Now") { AppRelaunch.now() }
                             .buttonStyle(LiquidButtonStyle(compact: true, active: true))
                             .fixedSize()
                         Button("Later") { languageNeedsRelaunch = false }
@@ -110,7 +110,7 @@ struct SettingsView: View {
                 // FanGlass stops sending its heartbeat the helper's watchdog
                 // hands the fans back anyway. Say which of the two it picks
                 // rather than implying a third behaviour that does not exist.
-                Text("With this off, fans are not restored the moment you quit; but once the helper has gone about 20 seconds without a heartbeat from FanGlass it hands them back to the system anyway.")
+                Text("With this off, fans are not restored the moment you quit. Once the helper has gone about 20 seconds without a heartbeat from FanGlass, it hands them back to the system anyway.")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
@@ -178,7 +178,7 @@ struct SettingsView: View {
     private var alertCard: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
-                GlassSectionHeader(title: String(localized: "Overheat alert"))
+                GlassSectionHeader(title: String(localized: "Overheat Alert"))
 
                 HStack {
                     Text("Temperature threshold")

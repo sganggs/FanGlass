@@ -49,7 +49,7 @@ final class HelperInstaller {
         Task { [self] in
             let result = await Self.runScript(
                 "install.sh",
-                prompt: String(localized: "FanGlass needs to install a privileged helper to control fan speed.")
+                prompt: String(localized: "FanGlass needs to install the Privileged Helper to control fan speed.")
             )
             if result.canceled {
                 phase = .canceled
@@ -78,7 +78,7 @@ final class HelperInstaller {
         Task { [self] in
             let result = await Self.runScript(
                 "uninstall.sh",
-                prompt: String(localized: "FanGlass needs authorization to uninstall the privileged helper.")
+                prompt: String(localized: "FanGlass needs authorization to uninstall the Privileged Helper.")
             )
             if result.canceled {
                 phase = .canceled
@@ -207,7 +207,7 @@ extension HelperInstaller.Phase {
         case .verifying:     return String(localized: "Starting the helper…")
         case .installed:     return String(localized: "Helper installed and connected")
         case .uninstalled:   return String(localized: "Helper uninstalled")
-        case .canceled:      return String(localized: "Authorization cancelled; the fans stay under automatic system control")
+        case .canceled:      return String(localized: "Authorization canceled; the fans stay under automatic system control")
         case .failed(let m): return m
         }
     }

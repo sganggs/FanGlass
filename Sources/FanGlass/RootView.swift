@@ -9,7 +9,7 @@ enum AppTab: String, CaseIterable {
     var title: String {
         switch self {
         case .dashboard: return String(localized: "Dashboard")
-        case .fans: return String(localized: "Fan control")
+        case .fans: return String(localized: "Fan Control")
         case .settings: return String(localized: "Settings")
         }
     }

@@ -5,7 +5,7 @@ set -euo pipefail
 
 # The dialog wording follows the app's UI language; FanGlass passes it in.
 # Run by hand from a terminal, the script speaks English.
-PROMPT="${FANGLASS_PROMPT:-FanGlass needs authorization to uninstall the privileged helper.}"
+PROMPT="${FANGLASS_PROMPT:-FanGlass needs authorization to uninstall the Privileged Helper.}"
 
 # bootout first: it sends SIGTERM, and the helper restores automatic fan
 # control before exiting. Then remove everything the install put on the disk —

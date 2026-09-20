@@ -520,8 +520,8 @@ final class AppState: ObservableObject {
 
     /// The banner is about a *current* write that is not landing. Once nothing
     /// is forced any more there is no write to fail, and leaving the flag set
-    /// left "Fan speed write did not take effect" on screen for the rest of the
-    /// session after the user had already put every fan back on Auto.
+    /// left "The fan speed change did not take effect" on screen for the rest
+    /// of the session after the user had already put every fan back on Auto.
     private func clearWriteFailureIfIdle() {
         if controlWriteFailed, !fanForcedActive.values.contains(true) { controlWriteFailed = false }
     }
@@ -904,7 +904,7 @@ final class AppState: ObservableObject {
         case .auto, .preset: return nil
         case .customCurve:   return String(localized: "Currently on a custom curve")
         case .fixed:         return String(localized: "Currently on a fixed speed")
-        case nil:            return fans.count > 1 ? String(localized: "Fans are set differently") : nil
+        case nil:            return fans.count > 1 ? String(localized: "Fans are on different modes") : nil
         }
     }
 

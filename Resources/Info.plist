@@ -4,16 +4,14 @@
 <dict>
     <!-- The source strings are English and double as the localization keys;
          Simplified Chinese lives in Resources/zh-Hans.lproj/Localizable.strings.
-         CFBundleLocalizations is what lets macOS offer FanGlass under System
-         Settings -> General -> Language & Region -> Applications, and what the
-         in-app Settings -> General -> Language picker writes an override for. -->
+         The .lproj folders the build copies in are what advertise those two
+         languages: macOS lists FanGlass under System Settings -> General ->
+         Language & Region -> Applications on the strength of them, and that is
+         the same per-app override the in-app Settings -> General -> Language
+         picker writes. A CFBundleLocalizations array here would only restate
+         Bundle.localizations, with a second place to forget to update. -->
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
-    <key>CFBundleLocalizations</key>
-    <array>
-        <string>en</string>
-        <string>zh-Hans</string>
-    </array>
     <key>CFBundleExecutable</key>
     <string>FanGlass</string>
     <key>CFBundleIdentifier</key>
