@@ -109,7 +109,7 @@ FanGlass.app (SwiftUI menu-bar agent, ordinary user privileges)
    │  SMC reads: temperatures / RPM / fan hardware range (IOKit AppleSMC, no privileges)
    │  JSON-lines over /var/run/fanglass.sock (5 s heartbeat)
    ▼
-fanglass-helper (launchd root daemon, protocol v5)
+fanglass-helper (launchd root daemon, protocol v6)
    │  SMC writes: F{i}Md manual mode + F{i}Tg target RPM (legacy FS! bitmask where needed)
    │  re-asserted every second (macOS periodically takes fan control back)
    ▼

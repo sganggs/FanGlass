@@ -146,7 +146,6 @@ struct MenuBarView: View {
                     }
                 }
             }
-            .opacity(state.helperAvailable ? 1 : 0.55)
 
             // Covers 自定义曲线 / 固定转速 / mixed fans, so an all-dark row is
             // never left unexplained.
@@ -165,6 +164,12 @@ struct MenuBarView: View {
                                    action: @escaping () -> Void) -> some View {
         Button(title, action: action)
             .buttonStyle(LiquidButtonStyle(compact: true, active: active))
+            // Without a helper the pills still work — they save the mode, they
+            // just cannot move a fan yet — so the row must not read as disabled,
+            // and the selected pill least of all: dimming the one piece of
+            // feedback that confirms the user's click is exactly backwards.
+            // The orange line above already says it will not take effect.
+            .opacity(state.helperAvailable || active ? 1 : 0.55)
             .frame(maxWidth: .infinity)
             .layoutPriority(1)
     }

@@ -48,9 +48,11 @@ struct HelperOnboardingView: View {
             }
 
             HStack(spacing: 10) {
-                Text("之后可以随时在「设置 → 特权助手」里安装或卸载。")
+                // Same sentence the NSAlert path appends, from the same constant.
+                Text(HelperInstaller.Reason.uninstallNote)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 12)
                 Button("稍后") { state.cancelInstallRequest() }
                     .buttonStyle(LiquidButtonStyle())

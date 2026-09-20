@@ -28,6 +28,20 @@ if [ ! -f "$PLIST" ]; then
     exit 1
 fi
 
+# The protocol version the freshly installed daemon must answer with. The app
+# passes its own HelperProtocol.version; running from the repo it is read out of
+# the single source of truth. A wrong value here can only make a good install
+# report failure, never the other way round.
+HELPER_VERSION="${FANGLASS_HELPER_VERSION:-}"
+if [ -z "$HELPER_VERSION" ] && [ -f "$SCRIPT_DIR/../Sources/Shared/HelperProtocol.swift" ]; then
+    HELPER_VERSION="$(sed -n 's/.*static let version = \([0-9][0-9]*\).*/\1/p' \
+        "$SCRIPT_DIR/../Sources/Shared/HelperProtocol.swift" | head -1)"
+fi
+if ! [ "$HELPER_VERSION" -gt 0 ] 2>/dev/null; then
+    echo "error: could not determine the helper protocol version" >&2
+    exit 1
+fi
+
 # Stage into /tmp first: the privileged shell spawned by osascript has no
 # TCC permission to read from ~/Desktop (or other user folders).
 STAGE="$(mktemp -d /tmp/fanglass-stage-XXXXXX)"
@@ -77,17 +91,53 @@ printf '%s\\n' '/var/log/fanglass-helper.log 644 3 1024 * J' \\
     > /etc/newsyslog.d/com.fanglass.helper.conf
 chmod 644 /etc/newsyslog.d/com.fanglass.helper.conf
 launchctl bootout system/com.fanglass.helper 2>/dev/null || true
-sleep 1
-launchctl bootstrap system/ /Library/LaunchDaemons/com.fanglass.helper.plist 2>/dev/null \\
-    || launchctl kickstart -k system/com.fanglass.helper
-# bootstrap returns as soon as the job is accepted, not when the daemon has
-# bound its socket. Wait for it so a zero exit really means "ready to talk to".
+# bootout is asynchronous. Bootstrapping while the old job is still unloading
+# fails with "Bootstrap failed: 5: Input/output error", and a fixed sleep is a
+# guess — wait for the job to actually disappear instead. This matters more than
+# a first-time install failure would: an update that loses this race leaves the
+# machine with the old daemon killed and no new one.
 n=0
-while [ ! -S /var/run/fanglass.sock ] && [ \$n -lt 25 ]; do
+while launchctl print system/com.fanglass.helper >/dev/null 2>&1 && [ \$n -lt 25 ]; do
     sleep 0.2
     n=\$((n + 1))
 done
-[ -S /var/run/fanglass.sock ] || { echo "helper did not bind its socket" >&2; exit 1; }
+# Retry: even after the job is gone, launchd can refuse the first bootstrap.
+# kickstart is only meaningful when the job IS loaded, so it is not a fallback
+# for "bootstrap never took" — it is the repair for "loaded but not running".
+booted=0
+for attempt in 1 2 3 4 5; do
+    if launchctl bootstrap system/ /Library/LaunchDaemons/com.fanglass.helper.plist 2>/dev/null; then
+        booted=1
+        break
+    fi
+    if launchctl print system/com.fanglass.helper >/dev/null 2>&1; then
+        if launchctl kickstart -k system/com.fanglass.helper 2>/dev/null; then
+            booted=1
+            break
+        fi
+    fi
+    sleep 0.5
+done
+[ \$booted -eq 1 ] || { echo "launchctl 无法启动 com.fanglass.helper(bootstrap 连续失败 5 次)" >&2; exit 1; }
+# bootstrap returns as soon as the job is accepted, not when the daemon has
+# bound its socket — and a booted-out daemon leaves its socket FILE behind, so
+# a test on the path proves nothing. Prove readiness by talking to it: only a
+# ping answered with this protocol version means "ready to talk to". That also
+# catches an old daemon that survived the bootout and still answers an older
+# version. nc is used rather than python3, which on a Mac without the Command
+# Line Tools is a stub that pops an installer dialog instead of running.
+n=0
+ready=0
+while [ \$n -lt 30 ]; do
+    if printf '{"cmd":"ping"}\\n' | nc -U -w 2 /var/run/fanglass.sock 2>/dev/null \\
+        | tr -d ' ' | grep -q '"version":$HELPER_VERSION'; then
+        ready=1
+        break
+    fi
+    sleep 0.2
+    n=\$((n + 1))
+done
+[ \$ready -eq 1 ] || { echo "助手未在 /var/run/fanglass.sock 上应答 v$HELPER_VERSION ping" >&2; exit 1; }
 EOF
 )"
 

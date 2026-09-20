@@ -96,6 +96,14 @@ final class AppState: ObservableObject {
     let installer = HelperInstaller()
     /// What the user asked for while no helper was installed, replayed once one is.
     private var pendingIntent: (() -> Void)?
+    /// True from the moment an NSAlert is scheduled until it is dismissed.
+    /// `installer.isBusy` starts only once the install does, which leaves the
+    /// whole time the prompt is on screen unguarded.
+    private var promptOnScreen = false
+    /// `lastPromptedHelperVersion` before the outdated-helper prompt optimistically
+    /// bumped it, so a failed update can put it back instead of silently never
+    /// asking again about a version that never got installed.
+    private var prePromptHelperVersion: Int?
 
     /// Read by AppDelegate on termination (must stay nonisolated).
     nonisolated(unsafe) static var restoreAutoOnQuitFlag = true
@@ -188,8 +196,36 @@ final class AppState: ObservableObject {
             self.scanning = false
             self.startPolling()
             self.startHeartbeat()
+            self.reconcileHelperHolds()
             self.promptForHelperIfNeeded()
         }
+    }
+
+    /// The daemon outlives the app. If FanGlass was killed rather than quit
+    /// (crash, Force Quit, killall) it can still be holding fans this process
+    /// knows nothing about, and `releaseToAuto` only ever releases what *this*
+    /// process forced — so an inherited hold would be re-asserted once a second
+    /// with nothing able to call it off. Claim those holds on the way up:
+    /// whatever `controlDecide` will drive becomes ours to release, and anything
+    /// it will never visit (unsupported hardware, a fan index that is not in
+    /// `fans`) is handed straight back to macOS.
+    private func reconcileHelperHolds() {
+        helperQueue.async { [weak self] in
+            guard let held = HelperClient.shared.heldFans(), !held.isEmpty else { return }
+            Task { @MainActor in self?.adoptHelperHolds(held) }
+        }
+    }
+
+    private func adoptHelperHolds(_ held: [Int]) {
+        let managed = Set(fans.map(\.index))
+        for fan in held {
+            if fanControlSupported, managed.contains(fan) {
+                fanForcedActive[fan] = true
+            } else {
+                helperQueue.async { HelperClient.shared.auto(fan: fan) }
+            }
+        }
+        controlDecide()
     }
 
     /// A sensor reading worth trusting. The upper bound is generous enough for
@@ -437,8 +473,8 @@ final class AppState: ObservableObject {
             lastSentTime[fan] = Date()
             fanForcedActive[fan] = true
             helperQueue.async { [weak self] in
-                let ok = HelperClient.shared.hold(fan: fan, rpm: rpm)
-                Task { @MainActor in self?.applyControlResult(fan: fan, ok: ok) }
+                let outcome = HelperClient.shared.hold(fan: fan, rpm: rpm)
+                Task { @MainActor in self?.applyControlResult(fan: fan, outcome: outcome) }
             }
         }
         targetRPMs[fan] = rpm
@@ -450,17 +486,30 @@ final class AppState: ObservableObject {
         guard fanForcedActive[fan] == true else { return }
         fanForcedActive[fan] = false
         lastSentRPM.removeValue(forKey: fan)
+        clearWriteFailureIfIdle()
         helperQueue.async { HelperClient.shared.auto(fan: fan) }
+    }
+
+    /// The banner is about a *current* write that is not landing. Once nothing
+    /// is forced any more there is no write to fail, and leaving the flag set
+    /// left 风扇转速写入未生效 on screen for the rest of the session after the
+    /// user had already put every fan back on 自动.
+    private func clearWriteFailureIfIdle() {
+        if controlWriteFailed, !fanForcedActive.values.contains(true) { controlWriteFailed = false }
     }
 
     /// The helper answers whether the SMC write landed; discarding that answer
     /// is how a UI ends up showing a target RPM nothing ever applied.
-    private func applyControlResult(fan: Int, ok: Bool) {
-        if controlWriteFailed != !ok { controlWriteFailed = !ok }
+    private func applyControlResult(fan: Int, outcome: HelperClient.HoldOutcome) {
+        // Only an SMC refusal earns the banner. An unreachable daemon is the
+        // helper pill's and the 未安装特权助手 banner's story, and blaming the
+        // SMC for it would be simply untrue.
+        let refused = outcome == .refused
+        if controlWriteFailed != refused { controlWriteFailed = refused }
         // A failed send still recorded the target as sent, so hysteresis would
         // suppress the retry until the next heartbeat. Forget it and let the
         // next decision re-send immediately.
-        if !ok { lastSentRPM.removeValue(forKey: fan) }
+        if outcome != .applied { lastSentRPM.removeValue(forKey: fan) }
     }
 
     // MARK: - UI-facing mutations
@@ -495,6 +544,7 @@ final class AppState: ObservableObject {
         for fan in fans { updateFanConfig(fan.index) { $0.mode = .auto } }
         lastSentRPM.removeAll()
         fanForcedActive.removeAll()
+        controlWriteFailed = false
         endControlActivity()
         helperQueue.async { HelperClient.shared.autoAll() }
     }
@@ -536,7 +586,7 @@ final class AppState: ObservableObject {
     /// is no window at all, and a MenuBarExtra panel dismisses itself as soon as
     /// the password dialog takes focus.
     func requestHelperInstall(reason: HelperInstaller.Reason) {
-        guard !installer.isBusy, !showInstallSheet else { return }
+        guard !installer.isBusy, !showInstallSheet, !promptOnScreen else { return }
         installReason = reason
         installer.clearNote()
         if NSApp.windows.contains(where: { AppDelegate.isMainWindow($0) && $0.isVisible }) {
@@ -555,11 +605,21 @@ final class AppState: ObservableObject {
             let intent = pendingIntent
             pendingIntent = nil
             if let version {
+                prePromptHelperVersion = nil
                 applyHelperProbe(version)
                 showInstallSheet = false
                 intent?()          // replay what the user picked before installing
+                reconcileHelperHolds()   // a fresh daemon may already hold fans
                 controlDecide()
             } else {
+                // A *failed* update must not consume the one prompt this protocol
+                // version gets: the machine is now in the state the prompt was
+                // trying to fix. A declined one keeps the bump — the user said no,
+                // and nagging every launch is not an answer to that.
+                if case .failed = installPhase, let previous = prePromptHelperVersion {
+                    settings.lastPromptedHelperVersion = previous
+                }
+                prePromptHelperVersion = nil
                 refreshHelperStatus()
                 // The NSAlert path has no window left to show the error in.
                 if !showInstallSheet, case .failed(let message) = installPhase {
@@ -577,6 +637,10 @@ final class AppState: ObservableObject {
     func cancelInstallRequest() {
         pendingIntent = nil
         showInstallSheet = false
+        // Declining keeps the version bump: the user answered the question, and
+        // asking again every launch is not a better answer. Dropping the rollback
+        // record also stops a later, unrelated manual install from undoing it.
+        prePromptHelperVersion = nil
     }
 
     private func promptForHelperIfNeeded() {
@@ -587,6 +651,7 @@ final class AppState: ObservableObject {
             reason = .firstLaunch
         } else if helperOutdated {
             guard settings.lastPromptedHelperVersion < HelperProtocol.version else { return }
+            prePromptHelperVersion = settings.lastPromptedHelperVersion
             settings.lastPromptedHelperVersion = HelperProtocol.version
             reason = .outdated   // never reinstall on our own; it costs a password
         } else {
@@ -601,17 +666,33 @@ final class AppState: ObservableObject {
     }
 
     private func presentInstallAlert(reason: HelperInstaller.Reason) {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = reason.title
-        alert.informativeText = reason.message
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: reason.confirmTitle)
-        alert.addButton(withTitle: "稍后")
-        if alert.runModal() == .alertFirstButtonReturn {
-            beginInstall()
-        } else {
-            cancelInstallRequest()
+        // Claimed synchronously, released in the Task's defer: `runModal` spins a
+        // nested run loop that still drains the main queue, so the sleeping
+        // first-launch Task could resume *inside* the first alert and stack a
+        // second one for the same intent. `installer.isBusy` does not cover this
+        // window — nothing is installing yet.
+        promptOnScreen = true
+        // Off the current turn, because this is reached synchronously from a
+        // picker's `withAnimation { ... }` closure; entering an AppKit modal
+        // loop with a SwiftUI transaction still open is asking for trouble.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.promptOnScreen = false }
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = reason.title
+            // The sheet spells out that the helper is removable; the alert is the
+            // only thing the user sees on first launch, which is exactly when an
+            // admin password is being asked for, so it must say the same.
+            alert.informativeText = reason.message + "\n\n" + HelperInstaller.Reason.uninstallNote
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: reason.confirmTitle)
+            alert.addButton(withTitle: "稍后")
+            if alert.runModal() == .alertFirstButtonReturn {
+                self.beginInstall()
+            } else {
+                self.cancelInstallRequest()
+            }
         }
     }
 

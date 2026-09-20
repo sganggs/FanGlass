@@ -158,6 +158,7 @@ struct RootView: View {
 
 struct HelperStatusPill: View {
     @EnvironmentObject var state: AppState
+    @State private var hovering = false
 
     private enum Status { case connected, outdated, missing }
 
@@ -174,11 +175,14 @@ struct HelperStatusPill: View {
         }
     }
 
+    /// The actionable states name the fix, not just the fault. A tooltip is no
+    /// affordance — it only reaches a user who already suspects the pill is a
+    /// button, which is exactly the user who does not need telling.
     private var label: String {
         switch status {
         case .connected: return "助手已连接"
-        case .outdated:  return "助手版本过旧"
-        case .missing:   return "助手未安装"
+        case .outdated:  return "助手版本过旧 · 更新"
+        case .missing:   return "助手未安装 · 安装"
         }
     }
 
@@ -195,8 +199,16 @@ struct HelperStatusPill: View {
             }
             .buttonStyle(.plain)
             .help(status == .outdated ? "点按更新特权助手" : "点按安装特权助手")
+            // Same signal LiquidButtonStyle gives: the surface answers the cursor.
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .animation(.easeOut(duration: 0.15), value: hovering)
         }
     }
+
+    private var actionable: Bool { status != .connected }
 
     private var pill: some View {
         HStack(spacing: 6) {
@@ -206,14 +218,19 @@ struct HelperStatusPill: View {
                 .shadow(color: color.opacity(0.6), radius: 3)
             Text(label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(actionable ? Color.primary : Color.secondary)
+            if actionable {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background {
             ZStack(alignment: .top) {
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(0.6))
+                    .fill(Color.white.opacity(hovering ? 0.85 : 0.6))
                 Capsule(style: .continuous)
                     .strokeBorder(
                         LinearGradient(

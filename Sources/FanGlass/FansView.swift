@@ -36,7 +36,23 @@ struct FansView: View {
                     } else if !state.helperAvailable {
                         // Same warning the menu-bar panel shows: without the helper a
                         // mode still saves and still lights up, but no fan moves.
-                        helperBanner
+                        helperBanner(
+                            title: "未安装特权助手,选择的模式不会生效",
+                            detail: "风扇转速的写入需要 root 权限,只需授权一次。",
+                            action: "安装助手…",
+                            reason: .banner
+                        )
+                    } else if state.helperOutdated {
+                        // An update that was declined or that failed leaves a
+                        // daemon too old for this build's commands. Without this
+                        // the only trace is the Settings card, which the user has
+                        // to go looking for — and the prompt fires only once.
+                        helperBanner(
+                            title: "特权助手版本过旧,部分指令可能不生效",
+                            detail: "更新只需再授权一次。",
+                            action: "更新助手…",
+                            reason: .outdated
+                        )
                     } else if state.sensorsUnavailable {
                         NoticeCard(
                             title: "传感器读取失败,已恢复系统自动控制",
@@ -74,21 +90,22 @@ struct FansView: View {
         }
     }
 
-    private var helperBanner: some View {
+    private func helperBanner(title: String, detail: String, action: String,
+                              reason: HelperInstaller.Reason) -> some View {
         GlassCard(padding: 14) {
             HStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("未安装特权助手,选择的模式不会生效")
+                    Text(title)
                         .font(.system(size: 12, weight: .medium))
-                    Text("风扇转速的写入需要 root 权限,只需授权一次。")
+                    Text(detail)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 10)
-                Button("安装助手…") { state.requestHelperInstall(reason: .banner) }
+                Button(action) { state.requestHelperInstall(reason: reason) }
                     .buttonStyle(LiquidButtonStyle(prominent: true))
                     .fixedSize()
             }

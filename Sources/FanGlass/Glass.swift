@@ -23,6 +23,11 @@ enum GlassPalette {
     }
 
     static let accent = Color(red: 0.25, green: 0.62, blue: 1.0)
+
+    /// `accent` for TEXT. The fill colour is ≈2.8:1 on a white glass chip —
+    /// below the 4.5:1 floor, and the selected state is precisely what has to be
+    /// readable at a glance. This darker blue is ≈4.7:1 on the same chip.
+    static let accentInk = Color(red: 0.0, green: 0.35, blue: 0.78)
 }
 
 // MARK: - solid background (static studio light + ambient heat strip)
@@ -197,11 +202,20 @@ struct LiquidButtonStyle: ButtonStyle {
                 .padding(.horizontal, compact ? 8 : 14)
                 .padding(.vertical, compact ? 5 : 7)
                 .frame(maxWidth: compact ? .infinity : nil)
-                .foregroundStyle(prominent ? Color.white : (active ? GlassPalette.accent : Color.primary))
+                .foregroundStyle(prominent ? Color.white : (active ? GlassPalette.accentInk : Color.primary))
                 .background {
                     ZStack(alignment: .top) {
                         Capsule(style: .continuous)
                             .fill(baseFill)
+                        // Tint the glass instead of replacing it. Filling the
+                        // active pill with accent @0.14 alone left the SELECTED
+                        // chip dimmer than its white @0.6 neighbours — in a row
+                        // of five it read as the recessed one, which inverts the
+                        // hierarchy the highlight exists to establish.
+                        if active && !prominent {
+                            Capsule(style: .continuous)
+                                .fill(GlassPalette.accent.opacity(isHovering ? 0.26 : 0.20))
+                        }
                         Capsule(style: .continuous)
                             .fill(
                                 LinearGradient(
@@ -249,7 +263,10 @@ struct LiquidButtonStyle: ButtonStyle {
 
         private var baseFill: AnyShapeStyle {
             if prominent { return AnyShapeStyle(GlassPalette.accent.gradient) }
-            if active { return AnyShapeStyle(GlassPalette.accent.opacity(isHovering ? 0.20 : 0.14)) }
+            // The active pill keeps the white glass body (and is a touch
+            // brighter than the inactive ones); the accent arrives as a tint
+            // layer above it, not as a replacement.
+            if active { return AnyShapeStyle(Color.white.opacity(isHovering ? 0.78 : 0.68)) }
             return AnyShapeStyle(Color.white.opacity(isHovering ? 0.75 : 0.6))
         }
 

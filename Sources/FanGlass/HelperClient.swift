@@ -65,9 +65,28 @@ final class HelperClient: @unchecked Sendable {
 
     var isAvailable: Bool { probe() != nil }
 
+    /// Fan indexes the daemon is currently holding, or nil when it does not
+    /// answer. Used at startup to adopt holds left behind by a FanGlass that
+    /// was killed rather than quit.
+    func heldFans() -> [Int]? {
+        guard let reply = send(["cmd": "status"]), (reply["ok"] as? Bool) == true else { return nil }
+        guard let holds = reply["holds"] as? [String: Any] else { return [] }
+        return holds.keys.compactMap(Int.init)
+    }
+
+    /// Why a `hold` did not take. "The daemon is gone" and "the SMC refused the
+    /// write" need different words on screen, and collapsing both into `false`
+    /// is how the fan card ended up blaming the SMC for a missing helper.
+    enum HoldOutcome {
+        case applied
+        case refused      // the helper answered, the SMC said no
+        case unreachable  // nothing answered on the socket
+    }
+
     @discardableResult
-    func hold(fan: Int, rpm: Double) -> Bool {
-        (send(["cmd": "hold", "fan": fan, "rpm": rpm])?["ok"] as? Bool) == true
+    func hold(fan: Int, rpm: Double) -> HoldOutcome {
+        guard let reply = send(["cmd": "hold", "fan": fan, "rpm": rpm]) else { return .unreachable }
+        return (reply["ok"] as? Bool) == true ? .applied : .refused
     }
 
     @discardableResult

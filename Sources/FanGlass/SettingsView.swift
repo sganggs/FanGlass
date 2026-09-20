@@ -63,7 +63,7 @@ struct SettingsView: View {
                 // FanGlass stops sending its heartbeat the helper's watchdog
                 // hands the fans back anyway. Say which of the two it picks
                 // rather than implying a third behaviour that does not exist.
-                Text("关闭后不会立即恢复,但助手仍会在约 20 秒后接管并交还系统控制。")
+                Text("关闭此选项后,退出时不会立即恢复;但助手在约 20 秒内收不到 FanGlass 的心跳,仍会自动把风扇交还系统控制。")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }

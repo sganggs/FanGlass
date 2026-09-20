@@ -2,14 +2,16 @@
 // Listens on /var/run/fanglass.sock (JSON-lines, one request per connection).
 //
 // Commands:
-//   {"cmd":"ping"}                      → {"ok":true,"version":5}
+//   {"cmd":"ping"}                      → {"ok":true,"version":6}
 //   {"cmd":"hold","fan":0,"rpm":2500}   → hold fan at rpm; helper re-asserts every 1s
 //   {"cmd":"auto","fan":0}              → return fan to system control
 //   {"cmd":"autoAll"}                   → all fans back to system control
 //   {"cmd":"status"}                    → {"ok":true,"holds":{"0":2500}}
 //
 // Safety: macOS re-asserts automatic control, so "hold" mode re-writes the target
-// every second. If the app goes silent for 20s the watchdog restores auto,
+// every second. If the app goes silent for 20s the watchdog restores auto —
+// "silent" counts only hold/auto/autoAll, never the ping/status queries, so a
+// client that merely polls liveness cannot keep a forgotten hold alive,
 // SIGTERM/SIGINT restore auto before exiting, and 10 s of failing SMC writes
 // also restores auto instead of hammering hardware that is not listening.
 //
@@ -166,7 +168,12 @@ final class Helper: @unchecked Sendable {
     }
 
     func handle(_ req: Request) -> [String: Any] {
-        touch()
+        // Deliberately NOT a blanket touch(): the watchdog has to mean "nobody is
+        // driving the fans any more", and `ping`/`status` are pure queries that a
+        // client sends while it is driving nothing. A client that polls liveness
+        // every few seconds would otherwise keep a hold it does not even know
+        // about alive forever. Only the three commands that change fan state
+        // refresh the deadline.
         switch req.cmd {
         case "ping":
             return ["ok": true, "version": HelperProtocol.version]
@@ -177,14 +184,17 @@ final class Helper: @unchecked Sendable {
             guard fan >= 0, fan < smc.fanCount(), rpm.isFinite else {
                 return ["ok": false, "error": "bad fan/rpm"]
             }
+            touch()
             setHold(fan: fan, rpm: rpm)
             // Apply now; the 1s timer only re-asserts against macOS stealing control.
             return ["ok": smc.setFanForced(index: fan, rpm: rpm)]
         case "auto":
             guard let fan = req.fan else { return ["ok": false, "error": "missing fan"] }
+            touch()
             setHold(fan: fan, rpm: nil)
             return ["ok": smc.setFanAuto(index: fan)]
         case "autoAll":
+            touch()
             restoreAutoAll(reason: "client request")
             return ["ok": true]
         case "status":

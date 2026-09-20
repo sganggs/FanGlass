@@ -109,7 +109,7 @@ FanGlass.app（SwiftUI 菜单栏程序，普通用户权限）
    │  读取 SMC：温度 / 转速 / 风扇硬件范围（IOKit AppleSMC，无需任何权限）
    │  JSON-lines over /var/run/fanglass.sock（每 5 秒一次心跳）
    ▼
-fanglass-helper（launchd root 守护进程，协议 v5）
+fanglass-helper（launchd root 守护进程，协议 v6）
    │  写入 SMC：F{i}Md 手动模式 + F{i}Tg 目标转速（老机型走 FS! 位掩码）
    │  每 1 秒重新断言一次（macOS 会周期性夺回风扇控制权）
    ▼
