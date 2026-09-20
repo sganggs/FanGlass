@@ -1,6 +1,15 @@
 // Models.swift — settings, fan curve model, persistence.
 import Foundation
 
+extension Double {
+    /// Range-check a value read from disk. NaN/infinity fail every comparison,
+    /// so they are caught here rather than reaching the fan control loop.
+    func clamped(to range: ClosedRange<Double>, fallback: Double) -> Double {
+        guard isFinite else { return fallback }
+        return Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    }
+}
+
 // MARK: - Fan curve
 
 struct CurvePoint: Codable, Equatable, Identifiable {
@@ -84,6 +93,39 @@ struct FanConfig: Codable, Equatable {
     var mode: FanControlMode = .auto
     var fixedPercent: Double = 45
     var curve: [CurvePoint] = FanConfig.defaultCurve
+
+    init() {}
+
+    /// Lenient like `AppSettings.init(from:)` — and for the same reason. A
+    /// throw here propagates all the way out of `SettingsStore.load()` and
+    /// takes every other fan's curve down with it.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = FanConfig()
+        mode = try c.decodeIfPresent(FanControlMode.self, forKey: .mode) ?? d.mode
+        fixedPercent = (try c.decodeIfPresent(Double.self, forKey: .fixedPercent) ?? d.fixedPercent)
+            .clamped(to: 0...100, fallback: d.fixedPercent)
+        let decoded = try c.decodeIfPresent([CurvePoint].self, forKey: .curve) ?? d.curve
+        curve = FanConfig.sanitized(decoded)
+    }
+
+    /// What every consumer of a curve is entitled to assume: at least two
+    /// points, finite values, percents in range, temps strictly increasing.
+    /// `CurveMath` documents strictly-increasing x, and nothing else enforces
+    /// it — the editor sorts its own draft, but a file written by another
+    /// build (or by hand) reaches `controlDecide` untouched.
+    static func sanitized(_ points: [CurvePoint]) -> [CurvePoint] {
+        var out: [CurvePoint] = []
+        for p in points.sorted(by: { $0.temp < $1.temp }) {
+            guard p.temp.isFinite, p.percent.isFinite else { continue }
+            let point = CurvePoint(id: p.id, temp: p.temp,
+                                   percent: p.percent.clamped(to: 0...100, fallback: 0))
+            // Duplicate temps make the PCHIP slopes explode; keep the last.
+            if let last = out.last, point.temp - last.temp < 0.5 { out[out.count - 1] = point }
+            else { out.append(point) }
+        }
+        return out.count >= 2 ? out : FanConfig.defaultCurve
+    }
 
     static let defaultCurve: [CurvePoint] = [
         CurvePoint(temp: 30, percent: 0),
@@ -175,9 +217,14 @@ struct AppSettings: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppSettings()
-        pollInterval = try c.decodeIfPresent(Double.self, forKey: .pollInterval) ?? d.pollInterval
-        hysteresisRPM = try c.decodeIfPresent(Double.self, forKey: .hysteresisRPM) ?? d.hysteresisRPM
-        overheatThreshold = try c.decodeIfPresent(Double.self, forKey: .overheatThreshold) ?? d.overheatThreshold
+        // Clamp to the ranges the UI offers: a hand-edited (or corrupted) file
+        // must not be able to set a 0 s poll interval or a negative threshold.
+        pollInterval = (try c.decodeIfPresent(Double.self, forKey: .pollInterval) ?? d.pollInterval)
+            .clamped(to: 0.5...3.0, fallback: d.pollInterval)
+        hysteresisRPM = (try c.decodeIfPresent(Double.self, forKey: .hysteresisRPM) ?? d.hysteresisRPM)
+            .clamped(to: 0...400, fallback: d.hysteresisRPM)
+        overheatThreshold = (try c.decodeIfPresent(Double.self, forKey: .overheatThreshold) ?? d.overheatThreshold)
+            .clamped(to: 0...110, fallback: d.overheatThreshold)
         controlSource = try c.decodeIfPresent(String.self, forKey: .controlSource) ?? d.controlSource
         // Retired group ids: "soc" was really the CPU efficiency cores and
         // "storage" was a guess at Ts*, which turned out not to be storage.
@@ -212,11 +259,17 @@ enum SettingsStore {
     static var fileURL: URL { directory.appendingPathComponent("settings.json") }
 
     static func load() -> AppSettings {
-        guard let data = try? Data(contentsOf: fileURL),
-              let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
-            return AppSettings()
+        guard let data = try? Data(contentsOf: fileURL) else { return AppSettings() }
+        if let settings = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            return settings
         }
-        return settings
+        // Every field decodes leniently, so reaching here means the file is not
+        // usable JSON at all. Keep it: silently replacing a file that holds
+        // hand-tuned fan curves is not a reset the user can undo.
+        let backup = directory.appendingPathComponent("settings.json.bak")
+        try? FileManager.default.removeItem(at: backup)
+        try? FileManager.default.moveItem(at: fileURL, to: backup)
+        return AppSettings()
     }
 
     static func save(_ settings: AppSettings) {

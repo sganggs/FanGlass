@@ -2,7 +2,7 @@
 // Listens on /var/run/fanglass.sock (JSON-lines, one request per connection).
 //
 // Commands:
-//   {"cmd":"ping"}                      → {"ok":true,"version":4}
+//   {"cmd":"ping"}                      → {"ok":true,"version":5}
 //   {"cmd":"hold","fan":0,"rpm":2500}   → hold fan at rpm; helper re-asserts every 1s
 //   {"cmd":"auto","fan":0}              → return fan to system control
 //   {"cmd":"autoAll"}                   → all fans back to system control
@@ -24,6 +24,34 @@ let watchdogInterval: TimeInterval = 20
 func log(_ message: String) {
     FileHandle.standardOutput.write("[helper] \(message)\n".data(using: .utf8)!)
 }
+
+/// Seconds of *awake* time since boot. Unlike `Date()` this does not advance
+/// while the Mac sleeps, which is what "the app has gone quiet" has to mean.
+func uptimeSeconds() -> TimeInterval {
+    TimeInterval(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000
+}
+
+/// One log line per 10 s for events a rogue client can trigger in a loop. The
+/// log is a root-owned file on the boot volume; it must not be a spam target.
+final class LogThrottle {
+    private let lock = NSLock()
+    private var lastLogged: TimeInterval = -.greatestFiniteMagnitude
+    private var suppressed = 0
+
+    func log(_ message: @autoclosure () -> String) {
+        lock.lock()
+        let now = uptimeSeconds()
+        guard now - lastLogged >= 10 else { suppressed += 1; lock.unlock(); return }
+        lastLogged = now
+        let skipped = suppressed
+        suppressed = 0
+        lock.unlock()
+        FileHandle.standardOutput.write(
+            "[helper] \(message())\(skipped > 0 ? " (+\(skipped) suppressed)" : "")\n".data(using: .utf8)!)
+    }
+}
+
+let rejectionLog = LogThrottle()
 
 /// The uid of whoever is sitting at this Mac, or nil when nobody is.
 func consoleUserID() -> uid_t? {
@@ -48,9 +76,16 @@ struct Request: Decodable {
     let rpm: Double?
 }
 
-final class Helper {
+/// Reachable from every connection thread. The discipline that makes this safe:
+/// `holds` and `lastActivity`/`lastActivityUptime` are only ever touched under
+/// `stateLock`, and `holdTimer` + `writeFailureStreak` only ever from the main
+/// queue (`handle` is called through `DispatchQueue.main.sync`, and the hold and
+/// watchdog timers are targeted at `.main`).
+final class Helper: @unchecked Sendable {
     let smc: SMC
     var lastActivity = Date()
+    /// Awake-time twin of `lastActivity`; see `watchdogCheck`.
+    var lastActivityUptime = uptimeSeconds()
     var holds: [Int: Double] = [:]   // fan index → target rpm
     let stateLock = NSLock()
     var holdTimer: DispatchSourceTimer?
@@ -63,7 +98,10 @@ final class Helper {
     }
 
     func touch() {
-        stateLock.lock(); lastActivity = Date(); stateLock.unlock()
+        stateLock.lock()
+        lastActivity = Date()
+        lastActivityUptime = uptimeSeconds()
+        stateLock.unlock()
     }
 
     func setHold(fan: Int, rpm: Double?) {
@@ -134,6 +172,11 @@ final class Helper {
             return ["ok": true, "version": HelperProtocol.version]
         case "hold":
             guard let fan = req.fan, let rpm = req.rpm else { return ["ok": false, "error": "missing fan/rpm"] }
+            // An index no fan answers to would be re-asserted (and logged)
+            // once a second until the failure streak gives up 10 s later.
+            guard fan >= 0, fan < smc.fanCount(), rpm.isFinite else {
+                return ["ok": false, "error": "bad fan/rpm"]
+            }
             setHold(fan: fan, rpm: rpm)
             // Apply now; the 1s timer only re-asserts against macOS stealing control.
             return ["ok": smc.setFanForced(index: fan, rpm: rpm)]
@@ -158,7 +201,13 @@ final class Helper {
 
     func watchdogCheck() {
         stateLock.lock()
+        // Both clocks must agree the app is gone. The wall clock alone jumps by
+        // the whole sleep duration the instant the Mac wakes, which fired the
+        // watchdog on every wake and dropped a hold the app was about to renew;
+        // the uptime clock alone would be fooled by nothing, but it stops during
+        // sleep, so requiring both means "silent while we were awake".
         let silent = Date().timeIntervalSince(lastActivity) > watchdogInterval
+            && uptimeSeconds() - lastActivityUptime > watchdogInterval
         let active = !holds.isEmpty
         stateLock.unlock()
         if silent && active { restoreAutoAll(reason: "watchdog timeout") }
@@ -222,7 +271,53 @@ for sig in [SIGTERM, SIGINT] {
     src.resume()
 }
 
+// MARK: connection handling
+
+/// Read one JSON line, answer it, close. Runs on a concurrent queue: a client
+/// that connects and never speaks must not stop the next one being served.
+func serve(_ clientFD: Int32) {
+    defer { close(clientFD) }
+
+    var nosig: Int32 = 1
+    setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
+    // Without this a client that sends nothing parks a thread forever. The app
+    // never takes more than a few ms to write its one line.
+    var timeout = timeval(tv_sec: 2, tv_usec: 0)
+    setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    setsockopt(clientFD, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+    var data = Data()
+    var chunk = [UInt8](repeating: 0, count: 4096)
+    while true {
+        let n = read(clientFD, &chunk, chunk.count)
+        // n < 0 is the receive timeout (EAGAIN) as well as a hard error; both
+        // mean "no complete line is coming".
+        if n <= 0 { break }
+        data.append(contentsOf: chunk[0..<n])
+        if data.contains(0x0a) || data.count > 8192 { break }
+    }
+
+    var response: [String: Any] = ["ok": false, "error": "bad request"]
+    if let line = data.split(separator: 0x0a).first,
+       let req = try? JSONDecoder().decode(Request.self, from: Data(line)) {
+        // Serialize all state + timer mutations onto the main queue.
+        if Thread.isMainThread {
+            response = helper.handle(req)
+        } else {
+            DispatchQueue.main.sync { response = helper.handle(req) }
+        }
+    }
+    if let out = try? JSONSerialization.data(withJSONObject: response) {
+        let payload = out + Data([0x0a])
+        payload.withUnsafeBytes { ptr in
+            _ = write(clientFD, ptr.baseAddress, payload.count)
+        }
+    }
+}
+
 // MARK: accept loop (background thread)
+
+let connectionQueue = DispatchQueue(label: "fanglass.helper.connections", attributes: .concurrent)
 
 DispatchQueue.global().async {
     while true {
@@ -233,42 +328,19 @@ DispatchQueue.global().async {
                 accept(serverFD, sa, &len)
             }
         }
-        if clientFD < 0 { continue }
+        if clientFD < 0 {
+            // EINTR/ECONNABORTED are transient; anything else would spin, so
+            // yield the thread rather than burn a core on a broken listener.
+            if errno != EINTR && errno != ECONNABORTED { usleep(100_000) }
+            continue
+        }
         guard peerAuthorized(clientFD) else {
-            log("rejected connection from an unauthorized uid")
+            rejectionLog.log("rejected connection from an unauthorized uid")
             close(clientFD)
             continue
         }
-
-        var nosig: Int32 = 1
-        setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
-
-        var data = Data()
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let n = read(clientFD, &chunk, chunk.count)
-            if n <= 0 { break }
-            data.append(contentsOf: chunk[0..<n])
-            if data.contains(0x0a) || data.count > 8192 { break }
-        }
-
-        var response: [String: Any] = ["ok": false, "error": "bad request"]
-        if let line = data.split(separator: 0x0a).first,
-           let req = try? JSONDecoder().decode(Request.self, from: Data(line)) {
-            // Serialize all state + timer mutations onto the main queue.
-            if Thread.isMainThread {
-                response = helper.handle(req)
-            } else {
-                DispatchQueue.main.sync { response = helper.handle(req) }
-            }
-        }
-        if let out = try? JSONSerialization.data(withJSONObject: response) {
-            let payload = out + Data([0x0a])
-            payload.withUnsafeBytes { ptr in
-                _ = write(clientFD, ptr.baseAddress, payload.count)
-            }
-        }
-        close(clientFD)
+        // Accept stays hot; only the (blocking) conversation moves off it.
+        connectionQueue.async { serve(clientFD) }
     }
 }
 

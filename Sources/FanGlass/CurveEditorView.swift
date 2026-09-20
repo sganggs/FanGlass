@@ -121,6 +121,10 @@ struct CurveEditorView: View {
 
     private func filledCurvePath(plot: CGRect) -> Path {
         var path = curvePath(plot: plot)
+        // curvePath is empty until .onAppear fills `draft`; addLine on a path
+        // with no current point logs a CoreGraphics "no current point" error
+        // on the first frame of every editor.
+        guard !path.isEmpty else { return path }
         path.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY))
         path.addLine(to: CGPoint(x: plot.minX, y: plot.maxY))
         path.closeSubpath()

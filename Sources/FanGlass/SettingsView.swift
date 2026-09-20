@@ -53,11 +53,19 @@ struct SettingsView: View {
                 ))
                 .font(.system(size: 12))
 
-                Toggle("退出时恢复风扇自动控制", isOn: Binding(
+                Toggle("退出时立即恢复风扇自动控制", isOn: Binding(
                     get: { state.settings.restoreAutoOnQuit },
                     set: { v in state.settings.restoreAutoOnQuit = v }
                 ))
                 .font(.system(size: 12))
+
+                // The toggle cannot mean "keep my fans where I left them": once
+                // FanGlass stops sending its heartbeat the helper's watchdog
+                // hands the fans back anyway. Say which of the two it picks
+                // rather than implying a third behaviour that does not exist.
+                Text("关闭后不会立即恢复,但助手仍会在约 20 秒后接管并交还系统控制。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
             }
         }
     }

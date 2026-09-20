@@ -181,7 +181,9 @@ struct FanCardView: View {
     private var fixedBody: some View {
         let binding = Binding<Double>(
             get: { config.fixedPercent },
-            set: { v in state.updateFanConfig(fan.index) { $0.fixedPercent = v } }
+            // Mid-drag: update the target and let hysteresis decide whether it
+            // is worth sending. The release below applies the final value.
+            set: { v in state.updateFanConfig(fan.index, resend: false) { $0.fixedPercent = v } }
         )
         let rpm = fan.minRPM + config.fixedPercent / 100 * (fan.maxRPM - fan.minRPM)
         return VStack(alignment: .leading, spacing: 6) {
@@ -199,6 +201,8 @@ struct FanCardView: View {
                 Text(String(format: "%.0f", fan.minRPM)).font(.system(size: 9))
             } maximumValueLabel: {
                 Text(String(format: "%.0f", fan.maxRPM)).font(.system(size: 9))
+            } onEditingChanged: { editing in
+                if !editing { state.resendFan(fan.index) }
             }
             .tint(GlassPalette.accent)
         }
@@ -278,7 +282,9 @@ struct FanCardView: View {
             .interpolationMethod(.catmullRom)
             .lineStyle(StrokeStyle(lineWidth: 1.6))
         }
-        .chartYScale(domain: 0...(fan.maxRPM * 1.1))
+        // A Mac whose F{i}Mx reads 0 would otherwise build the degenerate
+        // domain 0...0, which Charts does not handle gracefully.
+        .chartYScale(domain: 0...max(fan.maxRPM * 1.1, 1))
         .chartXAxis(.hidden)
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in

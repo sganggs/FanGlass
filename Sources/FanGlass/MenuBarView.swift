@@ -92,10 +92,9 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 328)
+        // Reopen is handled by MenuBarLabel, which — unlike this panel — is
+        // hosted for the whole life of the app.
         .onAppear { state.refreshHelperStatus() }
-        .onReceive(NotificationCenter.default.publisher(for: .fanglassOpenMainWindow)) { _ in
-            openMainWindow()
-        }
     }
 
     private var quickModes: some View {

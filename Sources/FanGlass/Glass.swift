@@ -582,14 +582,19 @@ struct SpinningFanView: View {
     @State private var lastDate: Date?
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        // Paused at rest: a stopped fan's glyph is visually static, but an
+        // unpaused TimelineView still redraws it 30x a second for as long as
+        // the window is open — in an app whose job is power and thermals.
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: rpm <= 0)) { timeline in
             Image(systemName: "fan.fill")
                 .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(color)
                 .rotationEffect(.degrees(angle))
                 .onChange(of: timeline.date) { _, newDate in
                     if let last = lastDate {
-                        let dt = newDate.timeIntervalSince(last)
+                        // Capped: coming back from paused (or an occluded
+                        // window) hands us the whole gap as one step.
+                        let dt = min(newDate.timeIntervalSince(last), 0.1)
                         // visually damped: 1000 RPM ≈ 0.8 rev/s, 4900 RPM ≈ 4 rev/s
                         angle = (angle + rpm * dt * 0.05 * 360 / 60).truncatingRemainder(dividingBy: 360)
                     }

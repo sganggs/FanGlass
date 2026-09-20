@@ -56,13 +56,18 @@ final class AppState: ObservableObject {
     @Published var pendingTab: AppTab?
     @Published var settings: AppSettings {
         didSet {
-            SettingsStore.save(settings)
+            scheduleSettingsSave()
             AppState.restoreAutoOnQuitFlag = settings.restoreAutoOnQuit
         }
     }
 
     // Worker-only state (serial queue → data-race safe by construction).
     nonisolated private let worker = DispatchQueue(label: "fanglass.worker", qos: .userInitiated)
+    /// Helper socket I/O only. Sharing `worker` meant one unresponsive daemon
+    /// froze the sensor stream for its whole 2 s timeout, because the poll timer
+    /// is targeted at that same serial queue.
+    nonisolated private let helperQueue = DispatchQueue(label: "fanglass.helper", qos: .userInitiated)
+    nonisolated private let saveQueue = DispatchQueue(label: "fanglass.settings", qos: .utility)
     nonisolated(unsafe) private var smc: SMC?
     nonisolated(unsafe) private var scanSnapshot: [(id: String, keys: [String])] = []
     nonisolated(unsafe) private var fanCountSnapshot = 0
@@ -79,6 +84,13 @@ final class AppState: ObservableObject {
     private var fanForcedActive: [Int: Bool] = [:]
     private var lastOverheatAlert = Date.distantPast
     private var pollTimer: DispatchSourceTimer?
+    private var heartbeatTimer: DispatchSourceTimer?
+    private var pendingSave: DispatchWorkItem?
+    /// Set once termination begins so nothing re-forces a fan behind the
+    /// restore-to-auto that is on its way out.
+    private var shuttingDown = false
+    /// App Nap assertion, held only while a fan is actually under our control.
+    private var controlActivity: NSObjectProtocol?
 
     // Privileged-helper install flow.
     let installer = HelperInstaller()
@@ -87,9 +99,13 @@ final class AppState: ObservableObject {
 
     /// Read by AppDelegate on termination (must stay nonisolated).
     nonisolated(unsafe) static var restoreAutoOnQuitFlag = true
+    /// The live engine. AppDelegate is instantiated by SwiftUI and has no other
+    /// way to reach it when the app is asked to quit.
+    static weak var shared: AppState?
 
     init() {
         settings = SettingsStore.load()
+        AppState.shared = self
         AppState.restoreAutoOnQuitFlag = settings.restoreAutoOnQuit
         let version = HelperClient.shared.probe()
         helperAvailable = version != nil
@@ -117,8 +133,6 @@ final class AppState: ObservableObject {
     }
 
     func restartPolling() {
-        pollTimer?.cancel()
-        pollTimer = nil
         startPolling()
     }
 
@@ -173,6 +187,7 @@ final class AppState: ObservableObject {
             self.fanControlSupported = controllable
             self.scanning = false
             self.startPolling()
+            self.startHeartbeat()
             self.promptForHelperIfNeeded()
         }
     }
@@ -220,13 +235,55 @@ final class AppState: ObservableObject {
 
     // MARK: - polling
 
+    /// Self-cancelling: moving the 采样间隔 slider while the initial SMC scan is
+    /// still running used to leave the bootstrap's timer running with nothing
+    /// holding a reference to it, polling forever at double rate.
     private func startPolling() {
+        guard !shuttingDown else { return }
+        pollTimer?.cancel()
+        pollTimer = nil
         helperCheckDivisor = max(1, Int((10.0 / max(0.1, settings.pollInterval)).rounded()))
         let t = DispatchSource.makeTimerSource(queue: worker)
         t.schedule(deadline: .now(), repeating: settings.pollInterval)
         t.setEventHandler { [weak self] in self?.pollOnce() }
         t.resume()
         pollTimer = t
+    }
+
+    /// Re-assert held fans on a fixed cadence. The helper hands every fan back
+    /// to macOS after 20 s of silence, and riding the poll timer for that made
+    /// the margin a function of the 采样间隔 slider — at 3 s the re-assert period
+    /// was already ~6 s, and anything that delayed a tick ate into the rest.
+    private func startHeartbeat() {
+        heartbeatTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 5, repeating: 5, leeway: .milliseconds(250))
+        t.setEventHandler { [weak self] in
+            Task { @MainActor in self?.controlDecide() }
+        }
+        t.resume()
+        heartbeatTimer = t
+    }
+
+    // MARK: - App Nap
+
+    /// FanGlass normally runs with no open window, which is exactly what App Nap
+    /// looks for, and a throttled heartbeat trips the helper's watchdog. The
+    /// assertion is held only while a fan is ours, and deliberately uses the
+    /// ...AllowingIdleSystemSleep variant: defeating App Nap must not also stop
+    /// the Mac from sleeping.
+    private func beginControlActivity() {
+        guard controlActivity == nil else { return }
+        controlActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "FanGlass fan control"
+        )
+    }
+
+    private func endControlActivity() {
+        guard let controlActivity else { return }
+        ProcessInfo.processInfo.endActivity(controlActivity)
+        self.controlActivity = nil
     }
 
     nonisolated private func pollOnce() {
@@ -268,8 +325,10 @@ final class AppState: ObservableObject {
         // sensors, and only assigns on change so views are not invalidated every tick.
         pollTick &+= 1
         if pollTick % helperCheckDivisor == 0 {
-            let version = HelperClient.shared.probe()
-            Task { @MainActor in self.applyHelperProbe(version) }
+            helperQueue.async {
+                let version = HelperClient.shared.probe()
+                Task { @MainActor in self.applyHelperProbe(version) }
+            }
         }
     }
 
@@ -323,7 +382,8 @@ final class AppState: ObservableObject {
         // Nothing to decide without a helper to carry it out, or on hardware
         // that has no writable fan target — a saved config copied from another
         // Mac must not make the helper hammer the SMC once a second.
-        guard helperAvailable, fanControlSupported else { return }
+        guard !shuttingDown else { return }
+        guard helperAvailable, fanControlSupported else { endControlActivity(); return }
         for fan in fans {
             let config = settings.fanConfig(for: fan.index)
             switch config.mode {
@@ -346,24 +406,39 @@ final class AppState: ObservableObject {
                     ys: config.curve.map(\.percent),
                     x: temp
                 )
+                // `max(0, min(100, .nan))` is 100 in Swift, so a non-finite
+                // result would mean full speed rather than an obvious failure.
+                guard pct.isFinite else {
+                    releaseToAuto(fan: fan.index)
+                    continue
+                }
                 let rpm = fan.minRPM + max(0, min(100, pct)) / 100 * (fan.maxRPM - fan.minRPM)
                 sendHold(fan: fan.index, rpm: rpm)
             }
         }
+        updateControlActivity()
+    }
+
+    /// Hold the App Nap assertion exactly while at least one fan is forced.
+    private func updateControlActivity() {
+        if fanForcedActive.values.contains(true) { beginControlActivity() }
+        else { endControlActivity() }
     }
 
     private func sendHold(fan: Int, rpm: Double) {
         let last = lastSentRPM[fan] ?? .greatestFiniteMagnitude
         let lastTime = lastSentTime[fan] ?? .distantPast
         let changed = abs(rpm - last) >= settings.hysteresisRPM
-        let heartbeat = Date().timeIntervalSince(lastTime) > 5
+        // Below the 5 s heartbeat timer's period, so every one of its ticks
+        // re-asserts rather than every other one.
+        let heartbeat = Date().timeIntervalSince(lastTime) > 4
         if changed || heartbeat {
             lastSentRPM[fan] = rpm
             lastSentTime[fan] = Date()
             fanForcedActive[fan] = true
-            worker.async { [weak self] in
+            helperQueue.async { [weak self] in
                 let ok = HelperClient.shared.hold(fan: fan, rpm: rpm)
-                Task { @MainActor in self?.applyControlResult(ok) }
+                Task { @MainActor in self?.applyControlResult(fan: fan, ok: ok) }
             }
         }
         targetRPMs[fan] = rpm
@@ -375,22 +450,36 @@ final class AppState: ObservableObject {
         guard fanForcedActive[fan] == true else { return }
         fanForcedActive[fan] = false
         lastSentRPM.removeValue(forKey: fan)
-        worker.async { HelperClient.shared.auto(fan: fan) }
+        helperQueue.async { HelperClient.shared.auto(fan: fan) }
     }
 
     /// The helper answers whether the SMC write landed; discarding that answer
     /// is how a UI ends up showing a target RPM nothing ever applied.
-    private func applyControlResult(_ ok: Bool) {
+    private func applyControlResult(fan: Int, ok: Bool) {
         if controlWriteFailed != !ok { controlWriteFailed = !ok }
+        // A failed send still recorded the target as sent, so hysteresis would
+        // suppress the retry until the next heartbeat. Forget it and let the
+        // next decision re-send immediately.
+        if !ok { lastSentRPM.removeValue(forKey: fan) }
     }
 
     // MARK: - UI-facing mutations
 
-    func updateFanConfig(_ index: Int, _ mutate: (inout FanConfig) -> Void) {
+    /// `resend: false` keeps hysteresis in charge — for continuous edits like a
+    /// slider drag, where forcing a send per step means a helper round-trip and
+    /// two root SMC writes for every one of the dozens of steps in one gesture.
+    func updateFanConfig(_ index: Int, resend: Bool = true, _ mutate: (inout FanConfig) -> Void) {
         var config = settings.fanConfig(for: index)
         mutate(&config)
         settings.setFanConfig(config, for: index)
         // Respond promptly to user edits.
+        if resend { lastSentRPM.removeValue(forKey: index) }
+        controlDecide()
+    }
+
+    /// Push this fan's current target out now, whatever hysteresis says — used
+    /// when a drag ends, so the value under the user's finger is the one applied.
+    func resendFan(_ index: Int) {
         lastSentRPM.removeValue(forKey: index)
         controlDecide()
     }
@@ -406,13 +495,14 @@ final class AppState: ObservableObject {
         for fan in fans { updateFanConfig(fan.index) { $0.mode = .auto } }
         lastSentRPM.removeAll()
         fanForcedActive.removeAll()
-        worker.async { HelperClient.shared.autoAll() }
+        endControlActivity()
+        helperQueue.async { HelperClient.shared.autoAll() }
     }
 
     // MARK: - privileged helper
 
     func refreshHelperStatus() {
-        worker.async {
+        helperQueue.async {
             let version = HelperClient.shared.probe()
             Task { @MainActor in self.applyHelperProbe(version) }
         }
@@ -567,9 +657,46 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - persistence
+
+    /// Persist ~0.5 s after the last change. Every slider in Settings writes
+    /// through `settings`, so a single drag used to mean dozens of synchronous
+    /// pretty-printed encodes and atomic file writes on the main thread.
+    private func scheduleSettingsSave() {
+        pendingSave?.cancel()
+        let snapshot = settings
+        let item = DispatchWorkItem { SettingsStore.save(snapshot) }
+        pendingSave = item
+        saveQueue.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    /// Write a debounced change out now. Called on the way to termination —
+    /// the process must not exit with the last half-second of edits unsaved.
+    private func flushSettings() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        let snapshot = settings
+        saveQueue.sync { SettingsStore.save(snapshot) }
+    }
+
     // MARK: - quit handling
 
-    func handleQuit() {
+    /// Ordered shutdown, called from `applicationWillTerminate`.
+    ///
+    /// The order matters: a `hold` queued by the last control decision that
+    /// arrived at the helper *after* `autoAll` would re-force the fan, and then
+    /// only the 20 s watchdog would undo it — exactly what 退出时恢复风扇自动控制
+    /// exists to prevent. Stopping the timers and draining the helper queue
+    /// makes that deterministic instead of a race.
+    func prepareForTermination() {
+        shuttingDown = true
+        pollTimer?.cancel()
+        pollTimer = nil
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
+        endControlActivity()
+        flushSettings()
+        helperQueue.sync {}   // barrier: nothing left in flight
         if settings.restoreAutoOnQuit {
             HelperClient.shared.autoAll()
         }

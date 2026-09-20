@@ -27,14 +27,32 @@ struct FanGlassApp: App {
             MenuBarView()
                 .environmentObject(state)
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "fan.fill")
-                Text(state.hottestTemperature > 0
-                     ? String(format: "%.0f°", state.hottestTemperature)
-                     : "--°")
-            }
+            MenuBarLabel(temperature: state.hottestTemperature)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// The status-item label — and the app's only permanently-hosted view.
+///
+/// `MenuBarView` exists only while the panel is open and the main Window scene
+/// is `.defaultLaunchBehavior(.suppressed)`, so in the app's steady state
+/// (panel closed, no window) nothing was subscribed to `.fanglassOpenMainWindow`
+/// and re-opening FanGlass from Finder or Spotlight did nothing at all.
+struct MenuBarLabel: View {
+    let temperature: Double
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "fan.fill")
+            Text(temperature > 0 ? String(format: "%.0f°", temperature) : "--°")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .fanglassOpenMainWindow)) { _ in
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "main")
+            DispatchQueue.main.async { AppDelegate.presentMainWindow() }
+        }
     }
 }
 
@@ -49,13 +67,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Finder / Spotlight re-open of an already-running agent: show the window.
+        // Finder / Spotlight re-open of an already-running agent: show the
+        // window. Raising an existing one is free; the notification asks
+        // MenuBarLabel to create one when there is none.
+        AppDelegate.presentMainWindow()
         NotificationCenter.default.post(name: .fanglassOpenMainWindow, object: nil)
         return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if AppState.restoreAutoOnQuitFlag {
+        if let state = AppState.shared {
+            state.prepareForTermination()
+        } else if AppState.restoreAutoOnQuitFlag {
+            // No engine to sequence the shutdown (should not happen) — the fans
+            // still must not be left held.
             HelperClient.shared.autoAll()
         }
     }
@@ -107,13 +132,21 @@ struct WindowAccessor: NSViewRepresentable {
         var timer: Timer?
         weak var view: NSView?
 
+        // dismantleNSView is not guaranteed to run on every teardown path; this
+        // is the backstop that keeps a stray timer from outliving the window.
+        deinit { timer?.invalidate() }
+
         func start(with view: NSView) {
             self.view = view
             timer?.invalidate()
             DispatchQueue.main.async { [weak self] in self?.killScrollers() }
-            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
                 self?.killScrollers()
             }
+            // .common, not .default: new NSScrollViews appear during scroll and
+            // menu tracking, which is precisely when .default stops firing.
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
         }
 
         private func killScrollers() {

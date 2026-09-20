@@ -10,7 +10,10 @@ public enum HelperProtocol {
     /// v4: peer-uid authorization on the socket, runtime-typed SMC writes, and
     /// restore-to-auto when writes keep failing. An older daemon still answers
     /// every command, so the app offers an update rather than refusing to talk.
-    public static let version = 4
+    /// v5: per-connection receive timeout and concurrent serving (a silent
+    /// client could wedge the accept loop and with it all fan control), fan
+    /// index validation, and a watchdog that no longer counts sleep as silence.
+    public static let version = 5
 
     public static let socketPath = "/var/run/fanglass.sock"
 }
