@@ -2,48 +2,35 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- The source strings are English and double as the localization keys;
-         Simplified Chinese lives in Resources/zh-Hans.lproj/Localizable.strings.
-         The .lproj folders the build copies in are what advertise those two
-         languages: macOS lists FanGlass under System Settings -> General ->
-         Language & Region -> Applications on the strength of them, and that is
-         the same per-app override the in-app Settings -> General -> Language
-         picker writes. A CFBundleLocalizations array here would only restate
-         Bundle.localizations, with a second place to forget to update. -->
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>FanGlass</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.fanglass.app</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>FanGlass</string>
-    <key>CFBundleDisplayName</key>
-    <string>FanGlass</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <!-- The Liquid Glass top bar needs macOS 26 and is behind an #available
-         check; everything else runs on macOS 15. Keep in sync with DEPLOY in
-         scripts/build.sh. -->
-    <key>LSMinimumSystemVersion</key>
-    <string>15.0</string>
-    <!-- Agent app: menu-bar extra only, no Dock tile / Cmd-Tab. -->
-    <key>LSUIElement</key>
-    <true/>
-    <key>LSMultipleInstancesProhibited</key>
-    <true/>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-    <!-- The whole design language is hard-coded light; keep materials light too. -->
-    <key>NSRequiresAquaSystemAppearance</key>
-    <true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>FanGlass</string>
+	<key>CFBundleExecutable</key>
+	<string>FanGlass</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.fanglass.app</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>FanGlass</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSRequiresAquaSystemAppearance</key>
+	<true/>
 </dict>
 </plist>
